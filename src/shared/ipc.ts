@@ -51,6 +51,24 @@ export type ActionResult =
   | { ok: false; error: string };
 
 // ---------------------------------------------------------------------------
+// Ollama setup IPC types
+// ---------------------------------------------------------------------------
+
+export interface AppConfig {
+  heavyModel: string;
+  lightModel: string;
+}
+
+/**
+ * Result of the `check-ollama` IPC call.
+ * On success: { ok: true }
+ * On failure: { ok: false; error: string; phase: ... }
+ */
+export type OllamaCheckResult =
+  | { ok: true }
+  | { ok: false; error: string; phase: 'reachability' | 'models' | 'smoketest' };
+
+// ---------------------------------------------------------------------------
 // Electron API exposed via contextBridge
 // ---------------------------------------------------------------------------
 
@@ -63,4 +81,10 @@ export interface ElectronAPI {
   continueWorld: (folderName: string) => Promise<ContinueWorldResult>;
   startOverWorld: (folderName: string) => Promise<ActionResult>;
   deleteWorld: (folderName: string) => Promise<ActionResult>;
+
+  // Ollama setup
+  checkOllama: () => Promise<OllamaCheckResult>;
+  pullModels: () => Promise<ActionResult>;
+  getConfig: () => Promise<AppConfig>;
+  onPullProgress: (callback: (status: string) => void) => void;
 }

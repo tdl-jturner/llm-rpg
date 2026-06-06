@@ -111,6 +111,49 @@
         margin-bottom: 12px;
       }
 
+      /* ── Ollama Setup Screen ───────────────────────────────────────────── */
+
+      #ollama-setup {
+        flex: 1;
+        display: none; /* shown by renderer when needed */
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 32px;
+        gap: 16px;
+      }
+
+      #ollama-setup h2 {
+        font-size: 16px;
+        color: #7ec8e3;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+
+      #ollama-status-msg {
+        color: #d4c5a9;
+        text-align: center;
+        max-width: 480px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+      }
+
+      #ollama-progress-msg {
+        color: #888;
+        font-size: 11px;
+        text-align: center;
+        max-width: 480px;
+        line-height: 1.5;
+        min-height: 2em;
+      }
+
+      #ollama-setup-buttons {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
       /* ── Game View ─────────────────────────────────────────────────────── */
 
       #game-view {
@@ -240,6 +283,14 @@
       <ul id="world-list"></ul>
 
       <button class="primary" id="btn-create-world">+ Create New World (select WORLD.md)</button>
+    </div>
+
+    <!-- Ollama Setup Screen -->
+    <div id="ollama-setup">
+      <h2>Ollama Setup</h2>
+      <p id="ollama-status-msg">Checking Ollama...</p>
+      <p id="ollama-progress-msg"></p>
+      <div id="ollama-setup-buttons"></div>
     </div>
 
     <!-- Game Screen -->

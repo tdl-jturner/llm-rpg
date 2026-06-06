@@ -43,6 +43,18 @@ export class EventLogger {
     this.write(record);
   }
 
+  logLlmCall(event: { model: string; prompt: string; response: string; ok: boolean }): void {
+    const record = {
+      event: 'llm.call',
+      ts: new Date().toISOString(),
+      model: event.model,
+      prompt: event.prompt,
+      response: event.response,
+      ok: event.ok,
+    };
+    this.write(record);
+  }
+
   close(): void {
     try {
       fs.closeSync(this.fd);

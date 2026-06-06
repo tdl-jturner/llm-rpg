@@ -6,6 +6,8 @@ import type {
   CreateWorldResult,
   ContinueWorldResult,
   ActionResult,
+  OllamaCheckResult,
+  AppConfig,
 } from './shared/ipc';
 
 const api: ElectronAPI = {
@@ -26,6 +28,19 @@ const api: ElectronAPI = {
 
   deleteWorld: (folderName: string): Promise<ActionResult> =>
     ipcRenderer.invoke('delete-world', folderName),
+
+  checkOllama: (): Promise<OllamaCheckResult> =>
+    ipcRenderer.invoke('check-ollama'),
+
+  pullModels: (): Promise<ActionResult> =>
+    ipcRenderer.invoke('pull-models'),
+
+  getConfig: (): Promise<AppConfig> =>
+    ipcRenderer.invoke('get-config'),
+
+  onPullProgress: (callback: (status: string) => void): void => {
+    ipcRenderer.on('pull-progress', (_event, status: string) => callback(status));
+  },
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

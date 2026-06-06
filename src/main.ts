@@ -7,12 +7,17 @@ import type { WorldDB } from './world-db';
 import { loadWorldFile } from './world-file-loader';
 import { createStubLLM } from './room-generator';
 import { EventLogger } from './event-logger';
+import { loadConfig } from './app-config';
+import { isOllamaReachable, listPulledModels, pullModel, callModel } from './ollama-client';
+import { runOllamaSetup } from './ollama-setup';
 import type {
   ListWorldsResponse,
   WorldSummary,
   CreateWorldResult,
   ContinueWorldResult,
   ActionResult,
+  OllamaCheckResult,
+  AppConfig,
 } from './shared/ipc';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
@@ -20,8 +25,9 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 
 let worldDB: WorldDB | undefined;
 let activeLogger: EventLogger | undefined;
+let appConfig: AppConfig = { heavyModel: 'qwen3:8b', lightModel: 'gemma3:1b' };
 
-// Deterministic stub LLM — will be replaced with real Ollama in issue 006
+// Deterministic stub LLM — will be replaced with real Ollama in issue 007
 const stubLLM = createStubLLM({ delayMs: 500 });
 
 // ---------------------------------------------------------------------------
@@ -288,6 +294,52 @@ function registerIpcHandlers(): void {
 
     return { ok: true };
   });
+
+  // ── Ollama: get config ────────────────────────────────────────────────────
+  ipcMain.handle('get-config', (): AppConfig => {
+    return appConfig;
+  });
+
+  // ── Ollama: check reachability + models + smoke test ─────────────────────
+  ipcMain.handle('check-ollama', async (): Promise<OllamaCheckResult> => {
+    return runOllamaSetup(
+      appConfig,
+      {
+        isReachable: isOllamaReachable,
+        listModels: listPulledModels,
+        callModel,
+      },
+      activeLogger ?? undefined,
+    );
+  });
+
+  // ── Ollama: pull missing models ───────────────────────────────────────────
+  ipcMain.handle('pull-models', async (event): Promise<ActionResult> => {
+    let pulledModels: string[];
+    try {
+      pulledModels = await listPulledModels();
+    } catch (e) {
+      return { ok: false, error: `Could not list models: ${e instanceof Error ? e.message : e}` };
+    }
+
+    const required = [appConfig.heavyModel, appConfig.lightModel];
+    const missing = required.filter((tag) => !pulledModels.includes(tag));
+
+    for (const tag of missing) {
+      try {
+        await pullModel(tag, (status) => {
+          event.sender.send('pull-progress', `[${tag}] ${status}`);
+        });
+      } catch (e) {
+        return {
+          ok: false,
+          error: `Failed to pull "${tag}": ${e instanceof Error ? e.message : e}`,
+        };
+      }
+    }
+
+    return { ok: true };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +347,7 @@ function registerIpcHandlers(): void {
 // ---------------------------------------------------------------------------
 
 app.whenReady().then(() => {
+  appConfig = loadConfig(app.getPath('userData'));
   registerIpcHandlers();
   createWindow();
 
