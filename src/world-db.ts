@@ -740,6 +740,46 @@ function seedIfEmpty(db: Database.Database, worldFile: WorldFile): void {
     }
   }
 
+  // Insert any frontmatter-authored items
+  if (sr.items && sr.items.length > 0) {
+    const insertItem = db.prepare(
+      'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    );
+    for (const item of sr.items) {
+      insertItem.run(
+        item.name,
+        item.inspection_description,
+        `room:${roomId}`,
+        item.damage_min,
+        item.damage_max,
+        item.type,
+        0,
+        item.inspection_description,
+        item.room_blurb,
+      );
+    }
+  }
+
+  // Insert any frontmatter-authored monsters (no drops — world authors control the starting experience directly)
+  if (sr.monsters && sr.monsters.length > 0) {
+    const insertMonster = db.prepare(
+      'INSERT INTO monsters (name, description, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
+    );
+    for (const monster of sr.monsters) {
+      insertMonster.run(
+        monster.name,
+        monster.inspection_description,
+        `room:${roomId}`,
+        monster.hp,
+        monster.max_hp,
+        monster.damage_min,
+        monster.damage_max,
+        monster.inspection_description,
+        monster.room_blurb,
+      );
+    }
+  }
+
   // Insert initial player state
   db.prepare(
     'INSERT INTO player_state (id, current_room_id, hp, max_hp, equipped_weapon_id) VALUES (1, ?, 20, 20, NULL)',
