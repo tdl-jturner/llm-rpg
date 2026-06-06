@@ -9,6 +9,8 @@ import { generateRoom, LIMINAL_GAP_ROOM } from './room-generator';
 import type { NeighborState } from './room-generator';
 import type { LLMFunction } from './json-retry-runner';
 import type { EventLogger } from './event-logger';
+import { selectBestWeapon, shouldAutoEquip } from './auto-equip';
+import type { WeaponCandidate } from './auto-equip';
 
 export interface Room {
   id: number;
@@ -43,6 +45,18 @@ export interface SceneryRow {
   room_blurb: string;
 }
 
+export interface ItemRow {
+  id: number;
+  name: string;
+  location: string;
+  damage_min: number;
+  damage_max: number;
+  type: string;
+  disturbed: number; // 0 = false, 1 = true (SQLite boolean)
+  inspection_description: string;
+  room_blurb: string;
+}
+
 export interface WorldDB {
   db: Database.Database;
   getCurrentRoom(): Room;
@@ -63,6 +77,32 @@ export interface WorldDB {
 
   /** All scenery items for the given room, in insertion order. */
   getSceneryForRoom(roomId: number): SceneryRow[];
+
+  /** All items in a given room (location = "room:<roomId>"). */
+  getItemsInRoom(roomId: number): ItemRow[];
+
+  /** All items in the player's inventory (location = "player_inventory"). */
+  getPlayerInventory(): ItemRow[];
+
+  /** The player's current state (HP, equipped weapon, etc.). */
+  getPlayerState(): PlayerState;
+
+  /** The currently equipped weapon item, or null if unarmed. */
+  getEquippedWeapon(): ItemRow | null;
+
+  /**
+   * Move an item from the current room to the player's inventory.
+   * Sets disturbed = true and updates equipped_weapon_id if auto-equip applies.
+   * Returns the item row that was taken.
+   */
+  takeItem(itemId: number): ItemRow;
+
+  /**
+   * Move an item from the player's inventory to the current room.
+   * If the item was equipped, re-runs auto-equip selection and updates equipped_weapon_id.
+   * Returns the item row that was dropped.
+   */
+  dropItem(itemId: number): ItemRow;
 }
 
 /**
@@ -107,6 +147,18 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
   const stmtGetScenery = db.prepare(
     'SELECT id, room_id, name, inspection_description, room_blurb FROM scenery WHERE room_id = ? ORDER BY id ASC',
   );
+  const stmtGetItemsInRoom = db.prepare(
+    'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb FROM items WHERE location = ? ORDER BY id ASC',
+  );
+  const stmtGetInventory = db.prepare(
+    'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb FROM items WHERE location = ? ORDER BY id ASC',
+  );
+  const stmtGetItem = db.prepare(
+    'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb FROM items WHERE id = ?',
+  );
+  const stmtGetPlayerState = db.prepare('SELECT * FROM player_state WHERE id = 1');
+  const stmtUpdateItemLocation = db.prepare('UPDATE items SET location = ?, disturbed = ? WHERE id = ?');
+  const stmtUpdateEquippedWeapon = db.prepare('UPDATE player_state SET equipped_weapon_id = ? WHERE id = 1');
 
   // ── Startup: seed exits from frontmatter for the starting room ───────────
   // The starting room was inserted without exits (they have no target room_id yet).
@@ -128,6 +180,71 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
 
     getSceneryForRoom(roomId: number): SceneryRow[] {
       return stmtGetScenery.all(roomId) as SceneryRow[];
+    },
+
+    getItemsInRoom(roomId: number): ItemRow[] {
+      return stmtGetItemsInRoom.all(`room:${roomId}`) as ItemRow[];
+    },
+
+    getPlayerInventory(): ItemRow[] {
+      return stmtGetInventory.all('player_inventory') as ItemRow[];
+    },
+
+    getPlayerState(): PlayerState {
+      return stmtGetPlayerState.get() as PlayerState;
+    },
+
+    getEquippedWeapon(): ItemRow | null {
+      const player = stmtGetPlayerState.get() as PlayerState;
+      if (player.equipped_weapon_id == null) return null;
+      const item = stmtGetItem.get(player.equipped_weapon_id) as ItemRow | undefined;
+      return item ?? null;
+    },
+
+    takeItem(itemId: number): ItemRow {
+      const item = stmtGetItem.get(itemId) as ItemRow;
+
+      // Move item to inventory and mark as disturbed
+      stmtUpdateItemLocation.run('player_inventory', 1, itemId);
+
+      // Auto-equip check
+      const player = stmtGetPlayerState.get() as PlayerState;
+      const equippedId = player.equipped_weapon_id;
+      const currentWeapon: WeaponCandidate | null = equippedId
+        ? (stmtGetItem.get(equippedId) as ItemRow | undefined) ?? null
+        : null;
+
+      if (shouldAutoEquip(currentWeapon, item)) {
+        stmtUpdateEquippedWeapon.run(itemId);
+      }
+
+      return { ...item, location: 'player_inventory', disturbed: 1 };
+    },
+
+    dropItem(itemId: number): ItemRow {
+      const item = stmtGetItem.get(itemId) as ItemRow;
+      const player = stmtGetPlayerState.get() as PlayerState;
+      const currentRoomId = player.current_room_id;
+
+      // Move item to current room (disturbed stays true since it was previously taken)
+      stmtUpdateItemLocation.run(`room:${currentRoomId}`, 1, itemId);
+
+      // If this was the equipped weapon, re-run auto-equip selection
+      if (player.equipped_weapon_id === itemId) {
+        const remainingInventory = (
+          stmtGetInventory.all('player_inventory') as ItemRow[]
+        ).filter((i) => i.id !== itemId);
+
+        const candidates: WeaponCandidate[] = remainingInventory.map((i) => ({
+          id: i.id,
+          damage_min: i.damage_min,
+          damage_max: i.damage_max,
+        }));
+        const best = selectBestWeapon(candidates);
+        stmtUpdateEquippedWeapon.run(best ? best.id : null);
+      }
+
+      return { ...item, location: `room:${currentRoomId}`, disturbed: 1 };
     },
 
     async movePlayer(
@@ -304,6 +421,26 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           );
           for (const s of roomToCommit.scenery) {
             stmtInsertScenery.run(newRoomId, s.name, s.inspection_description, s.inspection_description, s.room_blurb);
+          }
+        }
+
+        // Persist generated items
+        if (roomToCommit.items && roomToCommit.items.length > 0) {
+          const stmtInsertItem = db.prepare(
+            'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          );
+          for (const item of roomToCommit.items) {
+            stmtInsertItem.run(
+              item.name,
+              item.inspection_description,
+              `room:${newRoomId}`,
+              item.damage_min,
+              item.damage_max,
+              item.type,
+              0,
+              item.inspection_description,
+              item.room_blurb,
+            );
           }
         }
 

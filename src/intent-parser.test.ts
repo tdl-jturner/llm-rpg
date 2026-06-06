@@ -119,6 +119,38 @@ describe('parseIntent', () => {
     });
   });
 
+  describe('DROP', () => {
+    it('parses "drop sword"', () => {
+      expect(parseIntent('drop sword')).toEqual<Intent>({ type: 'drop', target: 'sword' });
+    });
+
+    it('parses "DROP SWORD" (case-insensitive, lowercased target)', () => {
+      expect(parseIntent('DROP SWORD')).toEqual<Intent>({ type: 'drop', target: 'sword' });
+    });
+
+    it('parses "drop rusty blade"', () => {
+      expect(parseIntent('drop rusty blade')).toEqual<Intent>({ type: 'drop', target: 'rusty blade' });
+    });
+  });
+
+  describe('INVENTORY', () => {
+    it('parses "inventory"', () => {
+      expect(parseIntent('inventory')).toEqual<Intent>({ type: 'inventory' });
+    });
+
+    it('parses "i"', () => {
+      expect(parseIntent('i')).toEqual<Intent>({ type: 'inventory' });
+    });
+
+    it('parses "inv"', () => {
+      expect(parseIntent('inv')).toEqual<Intent>({ type: 'inventory' });
+    });
+
+    it('parses "INVENTORY" (case-insensitive)', () => {
+      expect(parseIntent('INVENTORY')).toEqual<Intent>({ type: 'inventory' });
+    });
+  });
+
   describe('unknown', () => {
     it('returns unknown for unrecognized input', () => {
       expect(parseIntent('xyzzy')).toEqual<Intent>({ type: 'unknown' });

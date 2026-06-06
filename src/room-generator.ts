@@ -27,11 +27,21 @@ export interface GeneratedSceneryItem {
   room_blurb: string;
 }
 
+export interface GeneratedWeaponItem {
+  name: string;
+  inspection_description: string;
+  room_blurb: string;
+  damage_min: number;
+  damage_max: number;
+  type: 'weapon';
+}
+
 export interface GeneratedRoom {
   name: string;
   fixed_description: string;
   exits: string[];
   scenery?: GeneratedSceneryItem[];
+  items?: GeneratedWeaponItem[];
 }
 
 export type GenerateRoomResult =
@@ -91,6 +101,7 @@ export const LIMINAL_GAP_ROOM: GeneratedRoom = {
     'A featureless gray space presses in around you. The way back is clear; nothing else is.',
   exits: [],
   scenery: [],
+  items: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -99,7 +110,7 @@ export const LIMINAL_GAP_ROOM: GeneratedRoom = {
 
 const ROOM_SCHEMA = {
   type: 'object',
-  required: ['name', 'fixed_description', 'exits', 'scenery'],
+  required: ['name', 'fixed_description', 'exits', 'scenery', 'items'],
   properties: {
     name: { type: 'string' },
     fixed_description: { type: 'string' },
@@ -113,6 +124,21 @@ const ROOM_SCHEMA = {
           name: { type: 'string' },
           inspection_description: { type: 'string' },
           room_blurb: { type: 'string' },
+        },
+      },
+    },
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'inspection_description', 'room_blurb', 'damage_min', 'damage_max', 'type'],
+        properties: {
+          name: { type: 'string' },
+          inspection_description: { type: 'string' },
+          room_blurb: { type: 'string' },
+          damage_min: { type: 'number' },
+          damage_max: { type: 'number' },
+          type: { type: 'string' },
         },
       },
     },
@@ -162,6 +188,7 @@ export function createStubLLM(options: StubLLMOptions = {}): LLMFunction {
       fixed_description: 'You step into an unremarkable space.',
       exits,
       scenery: [],
+      items: [],
     };
 
     return JSON.stringify(room);
@@ -274,12 +301,21 @@ export function buildGenerationPrompt(
   parts.push('Respond with ONLY a valid JSON object matching this schema (no extra text):');
   parts.push(
     '{ "name": string, "fixed_description": string, "exits": string[], ' +
-    '"scenery": [{ "name": string, "inspection_description": string, "room_blurb": string }] }',
+    '"scenery": [{ "name": string, "inspection_description": string, "room_blurb": string }], ' +
+    '"items": [{ "name": string, "inspection_description": string, "room_blurb": string, ' +
+    '"damage_min": number, "damage_max": number, "type": "weapon" }] }',
   );
   parts.push(
     'Include 0–3 scenery items (permanent fixtures like furniture, carvings, doors, torches). ' +
     '"room_blurb" is a 1-sentence presence note for the LOOK view. ' +
     '"inspection_description" is 2–3 sentences of close detail when the player examines it.',
+  );
+  parts.push(
+    'Include 0–3 items (weapons a player can pick up: swords, daggers, axes, maces, etc.). ' +
+    'For each item, set damage_min and damage_max (e.g. a dagger: 1-3, a sword: 3-7). ' +
+    '"room_blurb" describes where the item is found in the room. ' +
+    '"inspection_description" is 2–3 sentences of close detail when examined. ' +
+    'type must always be "weapon".',
   );
 
   return parts.join('\n');
@@ -318,6 +354,7 @@ export async function generateRoom(options: GenerateRoomOptions): Promise<Genera
       fixed_description: result.value.fixed_description,
       exits: filtered,
       scenery: result.value.scenery ?? [],
+      items: result.value.items ?? [],
     },
   };
 }

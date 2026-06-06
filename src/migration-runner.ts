@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 
-export const EXPECTED_SCHEMA_VERSION = 3;
+export const EXPECTED_SCHEMA_VERSION = 4;
 
 const V1_SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -84,6 +84,27 @@ ALTER TABLE scenery ADD COLUMN inspection_description TEXT NOT NULL DEFAULT '';
 ALTER TABLE scenery ADD COLUMN room_blurb TEXT NOT NULL DEFAULT '';
 `;
 
+/**
+ * V4 extends the items table with full weapon stats and location semantics:
+ * - location: "room:<id>", "player_inventory", or "monster:<id>"
+ * - damage_min / damage_max: weapon damage range
+ * - type: always "weapon" for now
+ * - disturbed: 0=authored room_blurb should appear, 1=use deterministic template
+ * - inspection_description: for LOOK AT / EXAMINE
+ * - room_blurb: authored blurb shown in LOOK when item is in room + undisturbed
+ *
+ * The original room_id column is kept for backward compatibility (unused in v4+).
+ */
+const V4_ADDITIONS = `
+ALTER TABLE items ADD COLUMN location TEXT NOT NULL DEFAULT '';
+ALTER TABLE items ADD COLUMN damage_min INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE items ADD COLUMN damage_max INTEGER NOT NULL DEFAULT 2;
+ALTER TABLE items ADD COLUMN type TEXT NOT NULL DEFAULT 'weapon';
+ALTER TABLE items ADD COLUMN disturbed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN inspection_description TEXT NOT NULL DEFAULT '';
+ALTER TABLE items ADD COLUMN room_blurb TEXT NOT NULL DEFAULT '';
+`;
+
 export function runMigrations(db: Database.Database): void {
   // Check if schema_version exists
   const tableExists = db
@@ -104,23 +125,32 @@ export function runMigrations(db: Database.Database): void {
 
     if (row && row.version === EXPECTED_SCHEMA_VERSION) {
       // Already at latest — apply all CREATE TABLE IF NOT EXISTS idempotently
-      // (ALTER TABLE IF NOT EXISTS is not supported; skip V3 re-runs since columns already exist)
+      // (ALTER TABLE IF NOT EXISTS is not supported; skip V3/V4 re-runs since columns already exist)
       db.exec(V1_SCHEMA);
       db.exec(V2_ADDITIONS);
       return;
     }
 
-    // V2 DB upgrading to V3
-    if (row && row.version === 2) {
-      applyV3Safely(db);
+    // V3 DB upgrading to V4
+    if (row && row.version === 3) {
+      applyV4Safely(db);
       db.prepare('UPDATE schema_version SET version = ?').run(EXPECTED_SCHEMA_VERSION);
       return;
     }
 
-    // V1 DB upgrading to V2+V3
+    // V2 DB upgrading to V3+V4
+    if (row && row.version === 2) {
+      applyV3Safely(db);
+      applyV4Safely(db);
+      db.prepare('UPDATE schema_version SET version = ?').run(EXPECTED_SCHEMA_VERSION);
+      return;
+    }
+
+    // V1 DB upgrading to V2+V3+V4
     if (row && row.version === 1) {
       db.exec(V2_ADDITIONS);
       applyV3Safely(db);
+      applyV4Safely(db);
       db.prepare('UPDATE schema_version SET version = ?').run(EXPECTED_SCHEMA_VERSION);
       return;
     }
@@ -130,6 +160,7 @@ export function runMigrations(db: Database.Database): void {
   db.exec(V1_SCHEMA);
   db.exec(V2_ADDITIONS);
   applyV3Safely(db);
+  applyV4Safely(db);
 
   // Seed schema_version if not set
   const existing = db.prepare('SELECT version FROM schema_version').get();
@@ -139,11 +170,11 @@ export function runMigrations(db: Database.Database): void {
 }
 
 /**
- * Applies V3 schema changes safely — SQLite doesn't support IF NOT EXISTS for
+ * Applies schema changes safely — SQLite doesn't support IF NOT EXISTS for
  * ALTER TABLE ADD COLUMN, so we catch the "duplicate column" error and ignore it.
  */
-function applyV3Safely(db: Database.Database): void {
-  for (const sql of V3_ADDITIONS.trim().split(';\n').filter(Boolean)) {
+function applyAltersSafely(db: Database.Database, additions: string): void {
+  for (const sql of additions.trim().split(';\n').filter(Boolean)) {
     try {
       db.exec(sql + ';');
     } catch (err) {
@@ -154,4 +185,12 @@ function applyV3Safely(db: Database.Database): void {
       }
     }
   }
+}
+
+function applyV3Safely(db: Database.Database): void {
+  applyAltersSafely(db, V3_ADDITIONS);
+}
+
+function applyV4Safely(db: Database.Database): void {
+  applyAltersSafely(db, V4_ADDITIONS);
 }

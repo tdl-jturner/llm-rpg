@@ -2,6 +2,8 @@ export type Intent =
   | { type: 'look' }
   | { type: 'look_at'; target: string }
   | { type: 'take'; target: string }
+  | { type: 'drop'; target: string }
+  | { type: 'inventory' }
   | { type: 'move'; direction: string }
   | { type: 'unknown' };
 
@@ -69,6 +71,17 @@ export function parseIntent(raw: string): Intent {
   const pickUpMatch = text.match(/^pick\s+up\s+(.+)$/);
   if (pickUpMatch) {
     return { type: 'take', target: pickUpMatch[1].trim() };
+  }
+
+  // INVENTORY / I / INV
+  if (text === 'inventory' || text === 'i' || text === 'inv') {
+    return { type: 'inventory' };
+  }
+
+  // DROP <target>
+  const dropMatch = text.match(/^drop\s+(.+)$/);
+  if (dropMatch) {
+    return { type: 'drop', target: dropMatch[1].trim() };
   }
 
   return { type: 'unknown' };

@@ -4,7 +4,7 @@ import { assembleBlurb } from './blurb-assembler';
 import { getRefusal } from './refusal-bank';
 import { resolveTarget } from './target-resolver';
 import type { Entity } from './target-resolver';
-import type { WorldDB } from './world-db';
+import type { WorldDB, ItemRow } from './world-db';
 import type { LLMFunction } from './json-retry-runner';
 import type { EventLogger } from './event-logger';
 
@@ -52,7 +52,7 @@ export async function handleSubmitInput(
 
     if (picked) {
       // Valid pick — resolve the original intent
-      return { narrative: [`> ${text}`, resolveEntityIntent(saved.pendingIntent, picked)] };
+      return { narrative: [`> ${text}`, resolveEntityIntent(saved.pendingIntent, picked, worldDB)] };
     } else {
       // Invalid pick — cancel disambiguation and treat as fresh input
       // Fall through to normal intent parsing below
@@ -66,20 +66,17 @@ export async function handleSubmitInput(
     case 'look': {
       const room = worldDB.getCurrentRoom();
       const scenery = worldDB.getSceneryForRoom(room.id);
-      narrative.push(assembleBlurb(room, { scenery }));
+      const items = worldDB.getItemsInRoom(room.id);
+      narrative.push(assembleBlurb(room, {
+        items: items.map((i) => ({ name: i.name, room_blurb: i.room_blurb, disturbed: i.disturbed === 1 })),
+        scenery,
+      }));
       break;
     }
 
     case 'look_at': {
       const room = worldDB.getCurrentRoom();
-      const scenery = worldDB.getSceneryForRoom(room.id);
-      const entities: Entity[] = scenery.map((s) => ({
-        id: s.id,
-        name: s.name,
-        kind: 'scenery' as const,
-        inspectionDescription: s.inspection_description,
-        roomBlurb: s.room_blurb,
-      }));
+      const entities = buildScopeEntities(worldDB, room.id);
 
       const result = resolveTarget(intent.target, entities);
 
@@ -98,30 +95,75 @@ export async function handleSubmitInput(
 
     case 'take': {
       const room = worldDB.getCurrentRoom();
-      const scenery = worldDB.getSceneryForRoom(room.id);
-      const entities: Entity[] = scenery.map((s) => ({
-        id: s.id,
-        name: s.name,
-        kind: 'scenery' as const,
-        inspectionDescription: s.inspection_description,
-        roomBlurb: s.room_blurb,
-      }));
+      const entities = buildScopeEntities(worldDB, room.id);
 
       const result = resolveTarget(intent.target, entities);
 
       if (result.type === 'no_match') {
         narrative.push(getRefusal('nothing_here_named'));
       } else if (result.type === 'unique') {
-        if (result.entity.kind === 'scenery') {
+        const entity = result.entity;
+
+        if (entity.kind === 'scenery') {
           // Cannot take scenery — show the scenery's room_blurb as the refusal body
-          narrative.push(result.entity.roomBlurb || getRefusal('cannot_take_scenery'));
+          narrative.push(entity.roomBlurb || getRefusal('cannot_take_scenery'));
+        } else if (entity.kind === 'item') {
+          // Check if the item is already in inventory
+          const inventory = worldDB.getPlayerInventory();
+          const alreadyHave = inventory.find((i) => i.id === entity.id);
+          if (alreadyHave) {
+            narrative.push(`You already have the ${entity.name}.`);
+          } else {
+            const takenItem = worldDB.takeItem(entity.id);
+            let msg = `You take the ${takenItem.name}.`;
+            // Check if auto-equip happened
+            const equipped = worldDB.getEquippedWeapon();
+            if (equipped && equipped.id === takenItem.id) {
+              msg += ' You wield it.';
+            }
+            narrative.push(msg);
+          }
         }
-        // Other kinds (items, monsters) handled in later slices
       } else {
         // Ambiguous — enter disambiguation
         const candidateNames = result.candidates.map((c) => c.name).join(', ');
         narrative.push(`Which do you mean: ${candidateNames}?`);
         disambiguationState = { candidates: result.candidates, pendingIntent: 'take' };
+      }
+      break;
+    }
+
+    case 'drop': {
+      const inventory = worldDB.getPlayerInventory();
+      const inventoryEntities: Entity[] = inventory.map(itemRowToEntity);
+
+      const result = resolveTarget(intent.target, inventoryEntities);
+
+      if (result.type === 'no_match') {
+        narrative.push(getRefusal('cant_drop_what_you_dont_have'));
+      } else if (result.type === 'unique') {
+        const droppedItem = worldDB.dropItem(result.entity.id);
+        narrative.push(`You drop the ${droppedItem.name}.`);
+      } else {
+        // Ambiguous drop — unlikely but handle gracefully
+        const candidateNames = result.candidates.map((c) => c.name).join(', ');
+        narrative.push(`Which do you mean: ${candidateNames}?`);
+      }
+      break;
+    }
+
+    case 'inventory': {
+      const inventory = worldDB.getPlayerInventory();
+      const equipped = worldDB.getEquippedWeapon();
+
+      if (inventory.length === 0) {
+        narrative.push(getRefusal('inventory_empty'));
+      } else {
+        const lines = inventory.map((item) => {
+          const isEquipped = equipped && equipped.id === item.id;
+          return isEquipped ? `${item.name} (equipped)` : item.name;
+        });
+        narrative.push('You are carrying:\n' + lines.join('\n'));
       }
       break;
     }
@@ -146,7 +188,11 @@ export async function handleSubmitInput(
       } else {
         const room = result.room;
         const scenery = worldDB.getSceneryForRoom(room.id);
-        narrative.push(assembleBlurb(room, { scenery }));
+        const items = worldDB.getItemsInRoom(room.id);
+        narrative.push(assembleBlurb(room, {
+          items: items.map((i) => ({ name: i.name, room_blurb: i.room_blurb, disturbed: i.disturbed === 1 })),
+          scenery,
+        }));
         if (result.generationFailed) {
           narrative.push('(World generation hiccup logged.)');
         }
@@ -165,10 +211,43 @@ export async function handleSubmitInput(
 }
 
 /**
+ * Builds the full set of in-scope entities for target resolution.
+ * Includes items in the room AND items in the player's inventory (for LOOK AT).
+ */
+function buildScopeEntities(worldDB: WorldDB, roomId: number): Entity[] {
+  const scenery = worldDB.getSceneryForRoom(roomId);
+  const roomItems = worldDB.getItemsInRoom(roomId);
+  const inventory = worldDB.getPlayerInventory();
+
+  const sceneryEntities: Entity[] = scenery.map((s) => ({
+    id: s.id,
+    name: s.name,
+    kind: 'scenery' as const,
+    inspectionDescription: s.inspection_description,
+    roomBlurb: s.room_blurb,
+  }));
+
+  const roomItemEntities: Entity[] = roomItems.map(itemRowToEntity);
+  const inventoryEntities: Entity[] = inventory.map(itemRowToEntity);
+
+  return [...roomItemEntities, ...inventoryEntities, ...sceneryEntities];
+}
+
+function itemRowToEntity(item: ItemRow): Entity {
+  return {
+    id: item.id,
+    name: item.name,
+    kind: 'item' as const,
+    inspectionDescription: item.inspection_description,
+    roomBlurb: item.room_blurb,
+  };
+}
+
+/**
  * Resolves the original intent for a definitively-identified entity.
  * Used after disambiguation succeeds.
  */
-function resolveEntityIntent(intentType: 'look_at' | 'take', entity: Entity): string {
+function resolveEntityIntent(intentType: 'look_at' | 'take', entity: Entity, worldDB: WorldDB): string {
   if (intentType === 'look_at') {
     return entity.inspectionDescription;
   }
@@ -176,6 +255,19 @@ function resolveEntityIntent(intentType: 'look_at' | 'take', entity: Entity): st
   if (entity.kind === 'scenery') {
     return entity.roomBlurb || getRefusal('cannot_take_scenery');
   }
-  // Future: items, monsters
+  if (entity.kind === 'item') {
+    const inventory = worldDB.getPlayerInventory();
+    const alreadyHave = inventory.find((i) => i.id === entity.id);
+    if (alreadyHave) {
+      return `You already have the ${entity.name}.`;
+    }
+    const takenItem = worldDB.takeItem(entity.id);
+    let msg = `You take the ${takenItem.name}.`;
+    const equipped = worldDB.getEquippedWeapon();
+    if (equipped && equipped.id === takenItem.id) {
+      msg += ' You wield it.';
+    }
+    return msg;
+  }
   return getRefusal('cannot_take_scenery');
 }
