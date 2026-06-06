@@ -15,7 +15,7 @@ import path from 'path';
 import { openWorldDB } from './world-db';
 import type { WorldDB } from './world-db';
 import type { WorldFile } from './world-file-loader';
-import { handleSubmitInput, resetDisambiguationState } from './main-handler';
+import { handleSubmitInput, resetDisambiguationState, getDisambiguationState } from './main-handler';
 import { EventLogger } from './event-logger';
 
 // ---------------------------------------------------------------------------
@@ -967,5 +967,105 @@ describe('gen.monster and gen.item logging', () => {
     const genItemEvents = readEventsByType(logger.logFilePath, 'gen.item');
     expect(genMonsterEvents).toHaveLength(0);
     expect(genItemEvents).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Disambiguation state cleared on world switch
+// ---------------------------------------------------------------------------
+
+describe('Disambiguation state cleared on world switch', () => {
+  it('resetDisambiguationState clears stale state so next input is treated as fresh', async () => {
+    // World A: two swords in the room so "look at sword" triggers disambiguation
+    const worldFileA = makeWorldFile({
+      items: [
+        {
+          name: 'Iron Sword',
+          inspection_description: 'A sturdy iron blade.',
+          room_blurb: 'An iron sword rests here.',
+          damage_min: 3,
+          damage_max: 6,
+          type: 'weapon',
+        },
+        {
+          name: 'Rusty Sword',
+          inspection_description: 'A corroded blade.',
+          room_blurb: 'A rusty sword lies here.',
+          damage_min: 1,
+          damage_max: 2,
+          type: 'weapon',
+        },
+      ],
+    });
+    const dbA = openFreshDB(worldFileA);
+    const llmFn = vi.fn();
+
+    // "look at sword" matches both swords → enters disambiguation state
+    const disambigResult = await handleSubmitInput('look at sword', dbA, llmFn, undefined, 'world body');
+    expect(disambigResult.narrative.join(' ')).toContain('Which do you mean');
+    expect(getDisambiguationState()).not.toBeNull();
+
+    // Simulate world switch: resetDisambiguationState() called (as main.ts will do)
+    resetDisambiguationState();
+    expect(getDisambiguationState()).toBeNull();
+
+    // World B: empty starting room (no items at all)
+    const worldFileB = makeWorldFile();
+    // Open a fresh DB in a separate tmpDir to isolate from World A
+    const tmpDirB = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-rpg-world-b-'));
+    let dbB: WorldDB | undefined;
+    try {
+      dbB = openWorldDB(tmpDirB, worldFileB);
+
+      // Type "Iron Sword" — without disambiguation state, this is treated as fresh
+      // input. "look at iron sword" would be a look_at intent returning no_match
+      // (World B has no items). If disambiguation were still active, "Iron Sword"
+      // would match the stale candidate from World A and attempt to use its ID.
+      const freshResult = await handleSubmitInput('iron sword', dbB, llmFn, undefined, 'world body');
+
+      // Should NOT be a disambiguation resolution (which would have no narrative echo
+      // matching the candidate name directly). Should be treated as an unknown intent
+      // and reach the intent parser — which would return intent_unparseable since
+      // "iron sword" alone doesn't parse as any known command.
+      const narrative = freshResult.narrative.join(' ');
+      // The key invariant: disambiguation state was cleared, so this was NOT handled
+      // as a disambiguation pick.
+      expect(getDisambiguationState()).toBeNull(); // no new disambiguation triggered
+      // "iron sword" alone is an unknown command → intent_unparseable refusal
+      expect(narrative).toContain("don't understand");
+    } finally {
+      dbB?.db.close();
+      fs.rmSync(tmpDirB, { recursive: true, force: true });
+    }
+  });
+
+  it('getDisambiguationState is non-null after ambiguous input', async () => {
+    const worldFile = makeWorldFile({
+      items: [
+        {
+          name: 'Iron Sword',
+          inspection_description: 'A sturdy iron blade.',
+          room_blurb: 'An iron sword rests here.',
+          damage_min: 3,
+          damage_max: 6,
+          type: 'weapon',
+        },
+        {
+          name: 'Rusty Sword',
+          inspection_description: 'A corroded blade.',
+          room_blurb: 'A rusty sword lies here.',
+          damage_min: 1,
+          damage_max: 2,
+          type: 'weapon',
+        },
+      ],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    await handleSubmitInput('look at sword', db, llmFn, undefined, 'world body');
+    expect(getDisambiguationState()).not.toBeNull();
+    expect(getDisambiguationState()?.pendingIntent).toBe('look_at');
+    expect(getDisambiguationState()?.candidates).toHaveLength(2);
   });
 });

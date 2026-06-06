@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { handleSubmitInput, buildHudData } from './main-handler';
+import { handleSubmitInput, buildHudData, resetDisambiguationState } from './main-handler';
 import { openWorldDB } from './world-db';
 import type { WorldDB } from './world-db';
 import { loadWorldFile } from './world-file-loader';
@@ -202,6 +202,7 @@ function registerIpcHandlers(): void {
 
     try {
       worldDB?.db.close();
+      resetDisambiguationState();
       worldDB = openWorldDB(worldDir, world);
       activeRefusals = world.refusals;
       activeWorldBody = world.body;
@@ -244,6 +245,7 @@ function registerIpcHandlers(): void {
 
     try {
       worldDB?.db.close();
+      resetDisambiguationState();
       worldDB = openWorldDB(worldDir, parsed.world);
       activeRefusals = parsed.world.refusals;
       activeWorldBody = parsed.world.body;
@@ -278,6 +280,7 @@ function registerIpcHandlers(): void {
     activeLogger?.close();
     activeLogger = undefined;
     activeWorldBody = undefined;
+    resetDisambiguationState();
 
     // Delete the SQLite database; preserve WORLD.md and logs/
     try {
@@ -323,6 +326,7 @@ function registerIpcHandlers(): void {
     activeLogger?.close();
     activeLogger = undefined;
     activeWorldBody = undefined;
+    resetDisambiguationState();
 
     try {
       fs.rmSync(worldDir, { recursive: true, force: true });
