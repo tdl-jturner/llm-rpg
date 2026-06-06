@@ -33,3 +33,32 @@ export function reciprocalDirection(direction: string): string {
   if (!r) throw new Error(`Unknown direction: ${direction}`);
   return r;
 }
+
+/**
+ * Add two coordinate vectors together (pure, no DB access).
+ * Used to compute the target coordinates when moving in a direction.
+ */
+export function addCoords(a: Coords, b: Coords): Coords {
+  return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
+}
+
+/**
+ * Return true if two coordinate objects refer to the same cell.
+ * Used to detect loop-closure (target coord already occupied by existing room).
+ */
+export function coordsEqual(a: Coords, b: Coords): boolean {
+  return a.x === b.x && a.y === b.y && a.z === b.z;
+}
+
+/**
+ * Given a set of exits a room already has (as a Set of direction strings),
+ * determine whether a reciprocal back-exit needs to be added.
+ *
+ * Returns true  → the back-exit is missing and should be inserted.
+ * Returns false → the back-exit already exists; no-op.
+ *
+ * This is a pure predicate so it can be unit-tested without any DB.
+ */
+export function needsRetroBackExit(existingExits: Set<string>, backDirection: string): boolean {
+  return !existingExits.has(backDirection);
+}

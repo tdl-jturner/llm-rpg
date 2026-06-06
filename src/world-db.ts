@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { runMigrations } from './migration-runner';
 import type { WorldFile } from './world-file-loader';
-import { directionToOffset, reciprocalDirection } from './grid-topology';
+import { directionToOffset, reciprocalDirection, needsRetroBackExit } from './grid-topology';
 import type { Coords } from './grid-topology';
 import { generateRoom } from './room-generator';
 import type { LLMFunction } from './json-retry-runner';
@@ -172,9 +172,31 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       ) as Room | undefined;
 
       if (existingRoom) {
-        // Wire the exit and move player
-        stmtInsertExit.run(fromRoomId, direction, existingRoom.id);
+        // ── Loop closure: wire exits and retro-add reciprocal back-exit ────
+        const back = reciprocalDirection(direction);
+
+        db.transaction(() => {
+          // Wire the forward exit (current → existing)
+          stmtInsertExit.run(fromRoomId, direction, existingRoom.id);
+
+          // Retro-add the reciprocal back-exit if the existing room lacks it
+          const existingRoomExits = new Set(
+            (stmtGetExits.all(existingRoom.id) as { direction: string }[]).map((r) => r.direction),
+          );
+          if (needsRetroBackExit(existingRoomExits, back)) {
+            stmtInsertExit.run(existingRoom.id, back, fromRoomId);
+          }
+        })();
+
         stmtUpdatePlayerRoom.run(existingRoom.id);
+
+        // Log the link event
+        logger?.logGenRoom({
+          room_id: existingRoom.id,
+          coords: targetCoords,
+          source: 'linked',
+        });
+
         return { ok: true, room: existingRoom, generated: false };
       }
 
