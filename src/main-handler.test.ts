@@ -331,3 +331,86 @@ describe('handleSubmitInput – hud field', () => {
     expect(result.hud?.weapon).toEqual({ name: 'Rusty Dagger', damage_min: 1, damage_max: 4 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// cannot_take_scenery — refusal logging + override
+// ---------------------------------------------------------------------------
+
+describe('handleSubmitInput – cannot_take_scenery', () => {
+  function makeSceneryDB(roomBlurb: string) {
+    const db = makeStubWorldDB();
+    db.getSceneryForRoom = vi.fn().mockReturnValue([
+      {
+        id: 99,
+        name: 'stone pillar',
+        room_blurb: roomBlurb,
+        inspection_description: 'A tall stone pillar.',
+      },
+    ]);
+    return db;
+  }
+
+  function makeLogger() {
+    return {
+      logInputRaw: vi.fn(),
+      logInputParsed: vi.fn(),
+      logRefusal: vi.fn(),
+      logSessionStart: vi.fn(),
+      logSessionEnd: vi.fn(),
+      logStateMutate: vi.fn(),
+      logGenRoom: vi.fn(),
+      logGenMonster: vi.fn(),
+      logGenItem: vi.fn(),
+      logLlmCall: vi.fn(),
+      logError: vi.fn(),
+      close: vi.fn(),
+      logFilePath: '',
+    };
+  }
+
+  it('shows room_blurb and logs refusal with overridden=false when no override', async () => {
+    const db = makeSceneryDB('The pillar is embedded in the floor.');
+    const logger = makeLogger();
+
+    const result = await handleSubmitInput('take pillar', db as never, undefined, logger as never, undefined, {});
+
+    expect(result.narrative).toContain('The pillar is embedded in the floor.');
+    expect(logger.logRefusal).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'cannot_take_scenery', overridden: false }),
+    );
+  });
+
+  it('shows override string (not room_blurb) and logs overridden=true when override present', async () => {
+    const db = makeSceneryDB('The pillar is embedded in the floor.');
+    const logger = makeLogger();
+    const refusals = { cannot_take_scenery: 'You cannot pocket the scenery, fool.' };
+
+    const result = await handleSubmitInput('take pillar', db as never, undefined, logger as never, undefined, refusals);
+
+    expect(result.narrative).toContain('You cannot pocket the scenery, fool.');
+    expect(result.narrative).not.toContain('The pillar is embedded in the floor.');
+    expect(logger.logRefusal).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'cannot_take_scenery', overridden: true }),
+    );
+  });
+
+  it('uses default cannot_take_scenery text when scenery has no room_blurb and no override', async () => {
+    const db = makeStubWorldDB();
+    db.getSceneryForRoom = vi.fn().mockReturnValue([
+      {
+        id: 99,
+        name: 'stone pillar',
+        room_blurb: '',
+        inspection_description: 'A tall stone pillar.',
+      },
+    ]);
+    const logger = makeLogger();
+
+    const result = await handleSubmitInput('take pillar', db as never, undefined, logger as never, undefined, {});
+
+    expect(result.narrative).toContain("That's not something you can take.");
+    expect(logger.logRefusal).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'cannot_take_scenery', overridden: false }),
+    );
+  });
+});

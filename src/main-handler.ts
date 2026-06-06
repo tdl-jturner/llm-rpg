@@ -85,7 +85,7 @@ export async function handleSubmitInput(
 
     if (picked) {
       // Valid pick — resolve the original intent
-      const result = await resolveEntityIntentAsync(saved.pendingIntent, picked, worldDB);
+      const result = await resolveEntityIntentAsync(saved.pendingIntent, picked, worldDB, logger, refusals);
       return { narrative: [`> ${text}`, ...result] };
     } else {
       // Invalid pick — cancel disambiguation and treat as fresh input
@@ -171,8 +171,15 @@ export async function handleSubmitInput(
         const entity = result.entity;
 
         if (entity.kind === 'scenery') {
-          // Cannot take scenery — show the scenery's room_blurb as the refusal body
-          narrative.push(entity.roomBlurb || emitRefusal('cannot_take_scenery', logger, refusals));
+          // Cannot take scenery — use WORLD.md override if present, else show the scenery's room_blurb
+          const override = refusals?.['cannot_take_scenery'];
+          if (override) {
+            narrative.push(emitRefusal('cannot_take_scenery', logger, refusals));
+          } else {
+            const message = entity.roomBlurb || _getRefusal('cannot_take_scenery');
+            logger?.logRefusal({ key: 'cannot_take_scenery', message, overridden: false });
+            narrative.push(message);
+          }
         } else if (entity.kind === 'item') {
           // Check if the item is already in inventory
           const inventory = worldDB.getPlayerInventory();
@@ -406,6 +413,8 @@ async function resolveEntityIntentAsync(
   intentType: 'look_at' | 'take' | 'attack',
   entity: Entity,
   worldDB: WorldDB,
+  logger?: EventLogger,
+  refusals?: Record<string, string>,
 ): Promise<string[]> {
   if (intentType === 'look_at') {
     return [entity.inspectionDescription];
@@ -436,7 +445,13 @@ async function resolveEntityIntentAsync(
 
   // take
   if (entity.kind === 'scenery') {
-    return [entity.roomBlurb || _getRefusal('cannot_take_scenery')];
+    const override = refusals?.['cannot_take_scenery'];
+    if (override) {
+      return [emitRefusal('cannot_take_scenery', logger, refusals)];
+    }
+    const message = entity.roomBlurb || _getRefusal('cannot_take_scenery');
+    logger?.logRefusal({ key: 'cannot_take_scenery', message, overridden: false });
+    return [message];
   }
   if (entity.kind === 'item') {
     const inventory = worldDB.getPlayerInventory();
