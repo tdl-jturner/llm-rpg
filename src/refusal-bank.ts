@@ -23,6 +23,7 @@ const DEFAULTS: Record<string, string> = {
   inventory_empty: "You aren't carrying anything.",
   nothing_to_attack: "There's nothing here to fight.",
   chained_command_rejected: "Please do one thing at a time.",
+  generation_failed: "(World generation hiccup logged.)",
 };
 
 export function getRefusal(key: string, overrides?: Record<string, string>): string {

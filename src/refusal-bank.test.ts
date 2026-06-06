@@ -20,6 +20,17 @@ describe('getRefusal', () => {
     expect(typeof r).toBe('string');
   });
 
+  it('returns a real default for generation_failed (not the unknown-key sentinel)', () => {
+    const r = getRefusal('generation_failed');
+    expect(r).not.toMatch(/Unknown refusal/);
+    expect(r.length).toBeGreaterThan(0);
+  });
+
+  it('generation_failed override is applied when provided', () => {
+    const r = getRefusal('generation_failed', { generation_failed: 'The void shudders.' });
+    expect(r).toBe('The void shudders.');
+  });
+
   // ── Override map ────────────────────────────────────────────────────────────
 
   it('returns override when key exists in the override map', () => {

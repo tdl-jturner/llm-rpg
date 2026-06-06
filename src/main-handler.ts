@@ -278,7 +278,7 @@ export async function handleSubmitInput(
           exits,
         }));
         if (result.generationFailed) {
-          narrative.push('(World generation hiccup logged.)');
+          narrative.push(emitRefusal('generation_failed', logger, refusals));
         }
       }
       break;
