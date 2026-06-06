@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { handleSubmitInput } from './main-handler';
@@ -7,6 +7,7 @@ import type { WorldDB } from './world-db';
 import { loadWorldFile } from './world-file-loader';
 import { createRealLLM } from './room-generator';
 import { EventLogger } from './event-logger';
+import { getUnknownRefusalKeys } from './refusal-bank';
 import { loadConfig } from './app-config';
 import { isOllamaReachable, listPulledModels, pullModel, callModel } from './ollama-client';
 import { runOllamaSetup } from './ollama-setup';
@@ -25,6 +26,7 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 
 let worldDB: WorldDB | undefined;
 let activeLogger: EventLogger | undefined;
+let activeRefusals: Record<string, string> | undefined;
 let appConfig: AppConfig = { heavyModel: 'qwen3:8b', lightModel: 'gemma3:1b' };
 
 // Real LLM function — uses the heavy model via Ollama, logs each call.
@@ -121,9 +123,15 @@ function readWorldTitle(folderName: string): string {
  * Open a new EventLogger for the given world folder.
  * Closes the previous logger if open.
  */
-function openLogger(folderName: string): EventLogger {
+function openLogger(folderName: string, worldMdPath?: string): EventLogger {
+  activeLogger?.logSessionEnd();
   activeLogger?.close();
   activeLogger = new EventLogger(logsDir(), folderName);
+  activeLogger.logSessionStart({
+    worldName: folderName,
+    worldMdPath: worldMdPath ?? '',
+    engineVersion: app.getVersion(),
+  });
   return activeLogger;
 }
 
@@ -134,7 +142,7 @@ function openLogger(folderName: string): EventLogger {
 function registerIpcHandlers(): void {
   // ── Game input ────────────────────────────────────────────────────────────
   ipcMain.handle('submit-input', (_event, text: string) => {
-    return handleSubmitInput(text, worldDB, getRealLLM(), activeLogger);
+    return handleSubmitInput(text, worldDB, getRealLLM(), activeLogger, undefined, activeRefusals);
   });
 
   // ── World picker: list ────────────────────────────────────────────────────
@@ -194,7 +202,14 @@ function registerIpcHandlers(): void {
     try {
       worldDB?.db.close();
       worldDB = openWorldDB(worldDir, world);
-      openLogger(folderName);
+      activeRefusals = world.refusals;
+      const logger = openLogger(folderName, path.join(worldDir, 'WORLD.md'));
+      // Warn about unknown refusal keys
+      if (world.refusals) {
+        for (const key of getUnknownRefusalKeys(world.refusals)) {
+          logger.logError({ message: `Unknown refusal key in WORLD.md: "${key}" (ignored)` });
+        }
+      }
     } catch (e) {
       return { ok: false, error: `Could not open world database: ${e instanceof Error ? e.message : e}` };
     }
@@ -227,7 +242,14 @@ function registerIpcHandlers(): void {
     try {
       worldDB?.db.close();
       worldDB = openWorldDB(worldDir, parsed.world);
-      openLogger(folderName);
+      activeRefusals = parsed.world.refusals;
+      const logger = openLogger(folderName, mdPath);
+      // Warn about unknown refusal keys
+      if (parsed.world.refusals) {
+        for (const key of getUnknownRefusalKeys(parsed.world.refusals)) {
+          logger.logError({ message: `Unknown refusal key in WORLD.md: "${key}" (ignored)` });
+        }
+      }
     } catch (e) {
       return { ok: false, error: `Could not open world database: ${e instanceof Error ? e.message : e}` };
     }
@@ -308,17 +330,12 @@ function registerIpcHandlers(): void {
     return appConfig;
   });
 
-  // ── Ollama: check reachability + models + smoke test ─────────────────────
+  // ── Ollama: check reachability + models ──────────────────────────────────
   ipcMain.handle('check-ollama', async (): Promise<OllamaCheckResult> => {
-    return runOllamaSetup(
-      appConfig,
-      {
-        isReachable: isOllamaReachable,
-        listModels: listPulledModels,
-        callModel,
-      },
-      activeLogger ?? undefined,
-    );
+    return runOllamaSetup(appConfig, {
+      isReachable: isOllamaReachable,
+      listModels: listPulledModels,
+    });
   });
 
   // ── Ollama: pull missing models ───────────────────────────────────────────
@@ -348,6 +365,14 @@ function registerIpcHandlers(): void {
 
     return { ok: true };
   });
+
+  // ── Open Log Folder ───────────────────────────────────────────────────────
+  ipcMain.handle('open-log-folder', async (_event, folderName?: string): Promise<ActionResult> => {
+    const dir = folderName ? path.join(logsDir(), folderName) : logsDir();
+    fs.mkdirSync(dir, { recursive: true }); // ensure it exists
+    const result = await shell.openPath(dir);
+    return result === '' ? { ok: true } : { ok: false, error: result };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +391,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   worldDB?.db.close();
+  activeLogger?.logSessionEnd();
   activeLogger?.close();
   if (process.platform !== 'darwin') app.quit();
 });

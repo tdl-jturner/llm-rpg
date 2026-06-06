@@ -66,7 +66,7 @@ export interface AppConfig {
  */
 export type OllamaCheckResult =
   | { ok: true }
-  | { ok: false; error: string; phase: 'reachability' | 'models' | 'smoketest' };
+  | { ok: false; error: string; phase: 'reachability' | 'models' };
 
 // ---------------------------------------------------------------------------
 // Electron API exposed via contextBridge
@@ -81,6 +81,9 @@ export interface ElectronAPI {
   continueWorld: (folderName: string) => Promise<ContinueWorldResult>;
   startOverWorld: (folderName: string) => Promise<ActionResult>;
   deleteWorld: (folderName: string) => Promise<ActionResult>;
+
+  // Logs
+  openLogFolder: (folderName?: string) => Promise<ActionResult>;
 
   // Ollama setup
   checkOllama: () => Promise<OllamaCheckResult>;

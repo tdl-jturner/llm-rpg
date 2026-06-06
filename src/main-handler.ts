@@ -3,12 +3,25 @@ import { parseIntent } from './intent-parser';
 import type { Intent } from './intent-parser';
 import { parseIntentWithNl } from './nl-intent-parser';
 import { assembleBlurb } from './blurb-assembler';
-import { getRefusal } from './refusal-bank';
+import { getRefusal as _getRefusal } from './refusal-bank';
 import { resolveTarget } from './target-resolver';
 import type { Entity } from './target-resolver';
 import type { WorldDB, ItemRow, MonsterRow } from './world-db';
 import type { LLMFunction } from './json-retry-runner';
 import type { EventLogger } from './event-logger';
+
+/**
+ * Wraps getRefusal to apply WORLD.md overrides and emit a `refusal` log event.
+ */
+function emitRefusal(
+  key: string,
+  logger: EventLogger | undefined,
+  refusals: Record<string, string> | undefined,
+): string {
+  const message = _getRefusal(key, refusals);
+  logger?.logRefusal({ key, message, overridden: refusals != null && key in refusals });
+  return message;
+}
 
 /**
  * Disambiguation state — persisted between calls while the player is resolving
@@ -39,6 +52,7 @@ export async function handleSubmitInput(
   llmFn?: LLMFunction,
   logger?: EventLogger,
   worldBody?: string,
+  refusals?: Record<string, string>,
 ): Promise<SubmitInputResponse> {
   if (!worldDB) {
     // Fallback for tests that don't provide a DB
@@ -77,7 +91,7 @@ export async function handleSubmitInput(
     if (nlResult === 'chained') {
       // Multi-action input — reject immediately
       logger?.logInputParsed({ raw: text, intent: { type: 'chained' }, path: 'llm' });
-      return { narrative: [`> ${text}`, getRefusal('chained_command_rejected')] };
+      return { narrative: [`> ${text}`, emitRefusal('chained_command_rejected', logger, refusals)] };
     }
 
     intent = nlResult as Intent;
@@ -115,7 +129,7 @@ export async function handleSubmitInput(
       const result = resolveTarget(intent.target, entities);
 
       if (result.type === 'no_match') {
-        narrative.push(getRefusal('nothing_here_named'));
+        narrative.push(emitRefusal('nothing_here_named', logger, refusals));
       } else if (result.type === 'unique') {
         narrative.push(result.entity.inspectionDescription);
       } else {
@@ -134,13 +148,13 @@ export async function handleSubmitInput(
       const result = resolveTarget(intent.target, entities);
 
       if (result.type === 'no_match') {
-        narrative.push(getRefusal('nothing_here_named'));
+        narrative.push(emitRefusal('nothing_here_named', logger, refusals));
       } else if (result.type === 'unique') {
         const entity = result.entity;
 
         if (entity.kind === 'scenery') {
           // Cannot take scenery — show the scenery's room_blurb as the refusal body
-          narrative.push(entity.roomBlurb || getRefusal('cannot_take_scenery'));
+          narrative.push(entity.roomBlurb || emitRefusal('cannot_take_scenery', logger, refusals));
         } else if (entity.kind === 'item') {
           // Check if the item is already in inventory
           const inventory = worldDB.getPlayerInventory();
@@ -174,7 +188,7 @@ export async function handleSubmitInput(
       const result = resolveTarget(intent.target, inventoryEntities);
 
       if (result.type === 'no_match') {
-        narrative.push(getRefusal('cant_drop_what_you_dont_have'));
+        narrative.push(emitRefusal('cant_drop_what_you_dont_have', logger, refusals));
       } else if (result.type === 'unique') {
         const droppedItem = worldDB.dropItem(result.entity.id);
         narrative.push(`You drop the ${droppedItem.name}.`);
@@ -191,7 +205,7 @@ export async function handleSubmitInput(
       const equipped = worldDB.getEquippedWeapon();
 
       if (inventory.length === 0) {
-        narrative.push(getRefusal('inventory_empty'));
+        narrative.push(emitRefusal('inventory_empty', logger, refusals));
       } else {
         const lines = inventory.map((item) => {
           const isEquipped = equipped && equipped.id === item.id;
@@ -205,7 +219,7 @@ export async function handleSubmitInput(
     case 'move': {
       if (!llmFn) {
         // No LLM function provided — refuse movement (shouldn't happen at runtime)
-        narrative.push(getRefusal('no_exit'));
+        narrative.push(emitRefusal('no_exit', logger, refusals));
         break;
       }
 
@@ -227,7 +241,7 @@ export async function handleSubmitInput(
 
       if (!result.ok) {
         if (result.reason === 'no_exit') {
-          narrative.push(getRefusal('no_exit'));
+          narrative.push(emitRefusal('no_exit', logger, refusals));
         } else {
           // generation_failed (legacy path — currently unreachable since world-db
           // now falls back to the Liminal Gap room rather than returning this error)
@@ -255,7 +269,7 @@ export async function handleSubmitInput(
       const monstersInRoom = worldDB.getMonstersInRoom(room.id);
 
       if (monstersInRoom.length === 0) {
-        narrative.push(getRefusal('nothing_to_attack'));
+        narrative.push(emitRefusal('nothing_to_attack', logger, refusals));
         break;
       }
 
@@ -279,7 +293,7 @@ export async function handleSubmitInput(
         const result = resolveTarget(intent.target, monsterEntities);
 
         if (result.type === 'no_match') {
-          narrative.push(getRefusal('nothing_here_named'));
+          narrative.push(emitRefusal('nothing_here_named', logger, refusals));
           break;
         } else if (result.type === 'ambiguous') {
           const candidateNames = result.candidates.map((c) => c.name).join(', ');
@@ -292,7 +306,7 @@ export async function handleSubmitInput(
       }
 
       if (!targetMonster) {
-        narrative.push(getRefusal('nothing_to_attack'));
+        narrative.push(emitRefusal('nothing_to_attack', logger, refusals));
         break;
       }
 
@@ -321,7 +335,7 @@ export async function handleSubmitInput(
 
     case 'unknown':
     default: {
-      narrative.push(getRefusal('intent_unparseable'));
+      narrative.push(emitRefusal('intent_unparseable', logger, refusals));
       break;
     }
   }
@@ -379,7 +393,7 @@ async function resolveEntityIntentAsync(
 
   if (intentType === 'attack') {
     const monster = worldDB.getMonster(entity.id);
-    if (!monster) return [getRefusal('nothing_to_attack')];
+    if (!monster) return [_getRefusal('nothing_to_attack')];
 
     const attackResult = worldDB.attackMonster(monster.id);
     const lines: string[] = [
@@ -402,7 +416,7 @@ async function resolveEntityIntentAsync(
 
   // take
   if (entity.kind === 'scenery') {
-    return [entity.roomBlurb || getRefusal('cannot_take_scenery')];
+    return [entity.roomBlurb || _getRefusal('cannot_take_scenery')];
   }
   if (entity.kind === 'item') {
     const inventory = worldDB.getPlayerInventory();
@@ -418,7 +432,7 @@ async function resolveEntityIntentAsync(
     }
     return [msg];
   }
-  return [getRefusal('cannot_take_scenery')];
+  return [_getRefusal('cannot_take_scenery')];
 }
 
 function monsterRowToEntity(monster: MonsterRow): Entity {

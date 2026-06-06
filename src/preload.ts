@@ -29,6 +29,9 @@ const api: ElectronAPI = {
   deleteWorld: (folderName: string): Promise<ActionResult> =>
     ipcRenderer.invoke('delete-world', folderName),
 
+  openLogFolder: (folderName?: string): Promise<ActionResult> =>
+    ipcRenderer.invoke('open-log-folder', folderName),
+
   checkOllama: (): Promise<OllamaCheckResult> =>
     ipcRenderer.invoke('check-ollama'),
 

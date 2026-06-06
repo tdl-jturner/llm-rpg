@@ -89,4 +89,119 @@ describe('EventLogger', () => {
     expect(ts >= before).toBe(true);
     expect(ts <= after).toBe(true);
   });
+
+  // ── session.start ───────────────────────────────────────────────────────────
+
+  it('logSessionStart writes a session.start event', () => {
+    const logger = new EventLogger(tmpDir, 'world-start');
+    logger.logSessionStart({
+      worldName: 'My World',
+      worldMdPath: '/path/to/WORLD.md',
+      engineVersion: '1.0.0',
+    });
+    logger.close();
+
+    const events = readJsonl(logger.logFilePath);
+    expect(events).toHaveLength(1);
+    const ev = events[0] as Record<string, unknown>;
+    expect(ev['event']).toBe('session.start');
+    expect(ev['worldName']).toBe('My World');
+    expect(ev['worldMdPath']).toBe('/path/to/WORLD.md');
+    expect(ev['engineVersion']).toBe('1.0.0');
+    expect(typeof ev['ts']).toBe('string');
+  });
+
+  // ── session.end ─────────────────────────────────────────────────────────────
+
+  it('logSessionEnd writes a session.end event', () => {
+    const logger = new EventLogger(tmpDir, 'world-end');
+    logger.logSessionEnd();
+    logger.close();
+
+    const events = readJsonl(logger.logFilePath);
+    expect(events).toHaveLength(1);
+    const ev = events[0] as Record<string, unknown>;
+    expect(ev['event']).toBe('session.end');
+    expect(typeof ev['ts']).toBe('string');
+  });
+
+  // ── state.mutate ────────────────────────────────────────────────────────────
+
+  it('logStateMutate writes a state.mutate event', () => {
+    const logger = new EventLogger(tmpDir, 'world-mutate');
+    logger.logStateMutate({
+      entity: 'player',
+      id: 1,
+      before: { hp: 10 },
+      after: { hp: 7 },
+      reason: 'combat',
+    });
+    logger.close();
+
+    const events = readJsonl(logger.logFilePath);
+    expect(events).toHaveLength(1);
+    const ev = events[0] as Record<string, unknown>;
+    expect(ev['event']).toBe('state.mutate');
+    expect(ev['entity']).toBe('player');
+    expect(ev['id']).toBe(1);
+    expect(ev['before']).toEqual({ hp: 10 });
+    expect(ev['after']).toEqual({ hp: 7 });
+    expect(ev['reason']).toBe('combat');
+  });
+
+  // ── refusal ─────────────────────────────────────────────────────────────────
+
+  it('logRefusal writes a refusal event', () => {
+    const logger = new EventLogger(tmpDir, 'world-refusal');
+    logger.logRefusal({ key: 'no_exit', message: "You can't go that way.", overridden: false });
+    logger.close();
+
+    const events = readJsonl(logger.logFilePath);
+    expect(events).toHaveLength(1);
+    const ev = events[0] as Record<string, unknown>;
+    expect(ev['event']).toBe('refusal');
+    expect(ev['key']).toBe('no_exit');
+    expect(ev['message']).toBe("You can't go that way.");
+    expect(ev['overridden']).toBe(false);
+  });
+
+  it('logRefusal records overridden=true when override was used', () => {
+    const logger = new EventLogger(tmpDir, 'world-refusal-override');
+    logger.logRefusal({ key: 'no_exit', message: 'The way is shut.', overridden: true });
+    logger.close();
+
+    const events = readJsonl(logger.logFilePath);
+    const ev = events[0] as Record<string, unknown>;
+    expect(ev['overridden']).toBe(true);
+  });
+
+  // ── gen.monster ─────────────────────────────────────────────────────────────
+
+  it('logGenMonster writes a gen.monster event', () => {
+    const logger = new EventLogger(tmpDir, 'world-gen-monster');
+    logger.logGenMonster({ room_id: 5, count: 2 });
+    logger.close();
+
+    const events = readJsonl(logger.logFilePath);
+    expect(events).toHaveLength(1);
+    const ev = events[0] as Record<string, unknown>;
+    expect(ev['event']).toBe('gen.monster');
+    expect(ev['room_id']).toBe(5);
+    expect(ev['count']).toBe(2);
+  });
+
+  // ── gen.item ────────────────────────────────────────────────────────────────
+
+  it('logGenItem writes a gen.item event', () => {
+    const logger = new EventLogger(tmpDir, 'world-gen-item');
+    logger.logGenItem({ room_id: 7, count: 3 });
+    logger.close();
+
+    const events = readJsonl(logger.logFilePath);
+    expect(events).toHaveLength(1);
+    const ev = events[0] as Record<string, unknown>;
+    expect(ev['event']).toBe('gen.item');
+    expect(ev['room_id']).toBe(7);
+    expect(ev['count']).toBe(3);
+  });
 });

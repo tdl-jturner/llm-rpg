@@ -139,8 +139,7 @@ async function runSetupCheck(): Promise<void> {
     return;
   }
 
-  // smoketest
-  ollamaStatusMsg.textContent = `Smoke test failed:\n${result.error}`;
+  ollamaStatusMsg.textContent = result.error;
   setSetupButtons(
     makeButton('Retry', 'primary', () => runSetupCheck()),
   );
@@ -206,7 +205,11 @@ async function refreshWorldList(): Promise<void> {
     deleteBtn.className = 'danger';
     deleteBtn.addEventListener('click', () => onDelete(world.folderName, world.title));
 
-    li.append(titleSpan, continueBtn, startOverBtn, deleteBtn);
+    const openLogsBtn = document.createElement('button');
+    openLogsBtn.textContent = 'Open Logs';
+    openLogsBtn.addEventListener('click', () => window.electronAPI.openLogFolder(world.folderName));
+
+    li.append(titleSpan, continueBtn, startOverBtn, deleteBtn, openLogsBtn);
     worldListEl.appendChild(li);
   }
 }
@@ -269,6 +272,13 @@ btnCreateWorld.addEventListener('click', async () => {
 backToPickerBtn.addEventListener('click', () => {
   showPicker();
 });
+
+// Global "Open All Logs" button — wired up after DOM is ready
+const openAllLogsBtn = document.createElement('button');
+openAllLogsBtn.textContent = 'Open All Logs';
+openAllLogsBtn.id = 'btn-open-all-logs';
+openAllLogsBtn.addEventListener('click', () => window.electronAPI.openLogFolder());
+btnCreateWorld.insertAdjacentElement('afterend', openAllLogsBtn);
 
 // ---------------------------------------------------------------------------
 // Game loop

@@ -81,6 +81,75 @@ export class EventLogger {
     this.write(record);
   }
 
+  logSessionStart(event: { worldName: string; worldMdPath: string; engineVersion: string }): void {
+    const record = {
+      event: 'session.start',
+      ts: new Date().toISOString(),
+      worldName: event.worldName,
+      worldMdPath: event.worldMdPath,
+      engineVersion: event.engineVersion,
+    };
+    this.write(record);
+  }
+
+  logSessionEnd(): void {
+    const record = {
+      event: 'session.end',
+      ts: new Date().toISOString(),
+    };
+    this.write(record);
+  }
+
+  logStateMutate(event: {
+    entity: string;
+    id: number | string;
+    before: unknown;
+    after: unknown;
+    reason: string;
+  }): void {
+    const record = {
+      event: 'state.mutate',
+      ts: new Date().toISOString(),
+      entity: event.entity,
+      id: event.id,
+      before: event.before,
+      after: event.after,
+      reason: event.reason,
+    };
+    this.write(record);
+  }
+
+  logRefusal(event: { key: string; message: string; overridden: boolean }): void {
+    const record = {
+      event: 'refusal',
+      ts: new Date().toISOString(),
+      key: event.key,
+      message: event.message,
+      overridden: event.overridden,
+    };
+    this.write(record);
+  }
+
+  logGenMonster(event: { room_id: number; count: number }): void {
+    const record = {
+      event: 'gen.monster',
+      ts: new Date().toISOString(),
+      room_id: event.room_id,
+      count: event.count,
+    };
+    this.write(record);
+  }
+
+  logGenItem(event: { room_id: number; count: number }): void {
+    const record = {
+      event: 'gen.item',
+      ts: new Date().toISOString(),
+      room_id: event.room_id,
+      count: event.count,
+    };
+    this.write(record);
+  }
+
   logError(event: { message: string; detail?: string }): void {
     const record = {
       event: 'error',

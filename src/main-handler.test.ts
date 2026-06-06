@@ -146,3 +146,97 @@ describe('handleSubmitInput – NL fallback routing', () => {
     expect(llmFn).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Refusal overrides integration
+// ---------------------------------------------------------------------------
+
+describe('handleSubmitInput – refusal overrides', () => {
+  it('uses override message when refusals map overrides no_exit', async () => {
+    const db = makeStubWorldDB();
+    db.movePlayer = vi.fn().mockResolvedValue({ ok: false, reason: 'no_exit' });
+
+    const refusals = { no_exit: 'The path is sealed.' };
+    const result = await handleSubmitInput('go north', db as never, undefined, undefined, undefined, refusals);
+
+    expect(result.narrative).toContain('The path is sealed.');
+    expect(result.narrative).not.toContain("You can't go that way.");
+  });
+
+  it('uses override for intent_unparseable', async () => {
+    const db = makeStubWorldDB();
+
+    const refusals = { intent_unparseable: 'Speak plainly, traveller.' };
+    // No llmFn and no worldBody means deterministic unknown routes to intent_unparseable
+    const result = await handleSubmitInput('xyzzy', db as never, undefined, undefined, undefined, refusals);
+
+    expect(result.narrative).toContain('Speak plainly, traveller.');
+  });
+
+  it('uses default message when key is not in overrides', async () => {
+    const db = makeStubWorldDB();
+    db.movePlayer = vi.fn().mockResolvedValue({ ok: false, reason: 'no_exit' });
+
+    const refusals = { intent_unparseable: 'Override for different key' };
+    const result = await handleSubmitInput('go north', db as never, undefined, undefined, undefined, refusals);
+
+    expect(result.narrative).toContain("You can't go that way.");
+  });
+
+  it('logs a refusal event when a refusal is issued', async () => {
+    const db = makeStubWorldDB();
+    db.movePlayer = vi.fn().mockResolvedValue({ ok: false, reason: 'no_exit' });
+
+    const logRefusal = vi.fn();
+    const logger = {
+      logInputRaw: vi.fn(),
+      logInputParsed: vi.fn(),
+      logRefusal,
+      logSessionStart: vi.fn(),
+      logSessionEnd: vi.fn(),
+      logStateMutate: vi.fn(),
+      logGenRoom: vi.fn(),
+      logGenMonster: vi.fn(),
+      logGenItem: vi.fn(),
+      logLlmCall: vi.fn(),
+      logError: vi.fn(),
+      close: vi.fn(),
+      logFilePath: '',
+    };
+
+    await handleSubmitInput('go north', db as never, undefined, logger as never, undefined, {});
+
+    expect(logRefusal).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'no_exit', overridden: false }),
+    );
+  });
+
+  it('logs overridden=true when refusal was overridden from WORLD.md', async () => {
+    const db = makeStubWorldDB();
+
+    const logRefusal = vi.fn();
+    const logger = {
+      logInputRaw: vi.fn(),
+      logInputParsed: vi.fn(),
+      logRefusal,
+      logSessionStart: vi.fn(),
+      logSessionEnd: vi.fn(),
+      logStateMutate: vi.fn(),
+      logGenRoom: vi.fn(),
+      logGenMonster: vi.fn(),
+      logGenItem: vi.fn(),
+      logLlmCall: vi.fn(),
+      logError: vi.fn(),
+      close: vi.fn(),
+      logFilePath: '',
+    };
+
+    await handleSubmitInput('xyzzy', db as never, undefined, logger as never, undefined, {
+      intent_unparseable: 'Speak plainly.',
+    });
+
+    expect(logRefusal).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'intent_unparseable', overridden: true }),
+    );
+  });
+});
