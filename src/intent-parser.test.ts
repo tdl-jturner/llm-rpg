@@ -151,6 +151,40 @@ describe('parseIntent', () => {
     });
   });
 
+  describe('ATTACK / FIGHT / HIT / KILL', () => {
+    it('parses "attack goblin"', () => {
+      expect(parseIntent('attack goblin')).toEqual<Intent>({ type: 'attack', target: 'goblin' });
+    });
+
+    it('parses "fight goblin"', () => {
+      expect(parseIntent('fight goblin')).toEqual<Intent>({ type: 'attack', target: 'goblin' });
+    });
+
+    it('parses "hit goblin"', () => {
+      expect(parseIntent('hit goblin')).toEqual<Intent>({ type: 'attack', target: 'goblin' });
+    });
+
+    it('parses "kill goblin"', () => {
+      expect(parseIntent('kill goblin')).toEqual<Intent>({ type: 'attack', target: 'goblin' });
+    });
+
+    it('parses bare "attack" (no target) as attack with null target', () => {
+      expect(parseIntent('attack')).toEqual<Intent>({ type: 'attack', target: null });
+    });
+
+    it('parses bare "fight" with null target', () => {
+      expect(parseIntent('fight')).toEqual<Intent>({ type: 'attack', target: null });
+    });
+
+    it('is case-insensitive', () => {
+      expect(parseIntent('ATTACK GOBLIN')).toEqual<Intent>({ type: 'attack', target: 'goblin' });
+    });
+
+    it('parses multi-word target "attack stone golem"', () => {
+      expect(parseIntent('attack stone golem')).toEqual<Intent>({ type: 'attack', target: 'stone golem' });
+    });
+  });
+
   describe('unknown', () => {
     it('returns unknown for unrecognized input', () => {
       expect(parseIntent('xyzzy')).toEqual<Intent>({ type: 'unknown' });

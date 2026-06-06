@@ -9,7 +9,7 @@ describe('MigrationRunner', () => {
     db?.close();
   });
 
-  it('creates all tables (v1 + v2 + v3 + v4) in a fresh in-memory DB', () => {
+  it('creates all tables (v1 + v2 + v3 + v4 + v5) in a fresh in-memory DB', () => {
     db = new Database(':memory:');
     runMigrations(db);
 
@@ -28,7 +28,7 @@ describe('MigrationRunner', () => {
     expect(names).toContain('room_allowed_exits');
   });
 
-  it('sets schema_version to 4 after migration', () => {
+  it('sets schema_version to 5 after migration', () => {
     db = new Database(':memory:');
     runMigrations(db);
 

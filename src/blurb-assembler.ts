@@ -13,9 +13,14 @@ export interface ItemBlurb {
   disturbed: boolean;
 }
 
+export interface MonsterBlurb {
+  room_blurb: string;
+}
+
 export interface AssembleOptions {
   items?: ItemBlurb[];
   scenery?: SceneryBlurb[];
+  monsters?: MonsterBlurb[];
 }
 
 /**
@@ -24,13 +29,15 @@ export interface AssembleOptions {
  * Output order:
  *   1. fixed_description
  *   2. Each item's blurb (authored if disturbed=false, template if disturbed=true)
- *   3. Each scenery item's room_blurb (in author-supplied order)
+ *   3. Each monster's room_blurb (only while alive — callers filter dead monsters)
+ *   4. Each scenery item's room_blurb (in author-supplied order)
  *
  * Scenery blurbs are permanent — they never disappear.
  * Items disappear from LOOK once picked up (they move to inventory, not room).
+ * Monsters disappear from LOOK once dead (location changes to "dead:<id>").
  */
 export function assembleBlurb(room: RoomData, options: AssembleOptions = {}): string {
-  const { items = [], scenery = [] } = options;
+  const { items = [], scenery = [], monsters = [] } = options;
 
   const parts: string[] = [room.fixed_description];
 
@@ -41,6 +48,12 @@ export function assembleBlurb(room: RoomData, options: AssembleOptions = {}): st
       if (item.room_blurb) {
         parts.push(item.room_blurb);
       }
+    }
+  }
+
+  for (const monster of monsters) {
+    if (monster.room_blurb) {
+      parts.push(monster.room_blurb);
     }
   }
 

@@ -219,4 +219,37 @@ describe('LIMINAL_GAP_ROOM', () => {
   it('has an empty exits array (back-exit forced by caller)', () => {
     expect(LIMINAL_GAP_ROOM.exits).toEqual([]);
   });
+
+  it('has an empty monsters array', () => {
+    expect(LIMINAL_GAP_ROOM.monsters).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests for monster bounds in buildGenerationPrompt
+// ---------------------------------------------------------------------------
+
+describe('buildGenerationPrompt — monster bounds', () => {
+  it('includes monster hp and damage bounds in prompt when monsterBounds provided', () => {
+    const prompt = buildGenerationPrompt(
+      { x: 1, y: 0, z: 0 },
+      ['north'],
+      {
+        monsterBounds: {
+          hp_min: 8, hp_max: 15,
+          damage_min: 2, damage_max: 4,
+          drop_damage_min: 1, drop_damage_max: 2,
+        },
+      },
+    );
+    expect(prompt).toContain('8');
+    expect(prompt).toContain('15');
+    expect(prompt).toContain('drop');
+  });
+
+  it('uses empty monsters array instruction when no monsterBounds provided', () => {
+    const prompt = buildGenerationPrompt({ x: 1, y: 0, z: 0 }, ['north'], {});
+    expect(prompt).toContain('empty');
+    expect(prompt).toContain('monsters');
+  });
 });

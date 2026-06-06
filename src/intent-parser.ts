@@ -5,6 +5,7 @@ export type Intent =
   | { type: 'drop'; target: string }
   | { type: 'inventory' }
   | { type: 'move'; direction: string }
+  | { type: 'attack'; target: string | null }
   | { type: 'unknown' };
 
 const DIRECTIONS: Record<string, string> = {
@@ -82,6 +83,13 @@ export function parseIntent(raw: string): Intent {
   const dropMatch = text.match(/^drop\s+(.+)$/);
   if (dropMatch) {
     return { type: 'drop', target: dropMatch[1].trim() };
+  }
+
+  // ATTACK / FIGHT / HIT / KILL [<target>]
+  const attackMatch = text.match(/^(?:attack|fight|hit|kill)(?:\s+(.+))?$/);
+  if (attackMatch) {
+    const target = attackMatch[1] ? attackMatch[1].trim() : null;
+    return { type: 'attack', target };
   }
 
   return { type: 'unknown' };

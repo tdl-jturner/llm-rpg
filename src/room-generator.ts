@@ -36,12 +36,32 @@ export interface GeneratedWeaponItem {
   type: 'weapon';
 }
 
+export interface GeneratedMonsterDrop {
+  name: string;
+  inspection_description: string;
+  /** Authored blurb used when the drop appears in the room after monster death. */
+  room_blurb: string;
+  damage_min: number;
+  damage_max: number;
+}
+
+export interface GeneratedMonster {
+  name: string;
+  inspection_description: string;
+  room_blurb: string;
+  hp: number;
+  damage_min: number;
+  damage_max: number;
+  drop: GeneratedMonsterDrop;
+}
+
 export interface GeneratedRoom {
   name: string;
   fixed_description: string;
   exits: string[];
   scenery?: GeneratedSceneryItem[];
   items?: GeneratedWeaponItem[];
+  monsters?: GeneratedMonster[];
 }
 
 export type GenerateRoomResult =
@@ -70,6 +90,17 @@ export interface RoomGenerationContext {
    *   "forced back-exit to previous room"
    */
   neighborState?: NeighborState;
+  /** Balance bounds for monster generation — if omitted, monsters may be skipped. */
+  monsterBounds?: MonsterBoundsContext;
+}
+
+export interface MonsterBoundsContext {
+  hp_min: number;
+  hp_max: number;
+  damage_min: number;
+  damage_max: number;
+  drop_damage_min: number;
+  drop_damage_max: number;
 }
 
 export interface GenerateRoomOptions {
@@ -102,6 +133,7 @@ export const LIMINAL_GAP_ROOM: GeneratedRoom = {
   exits: [],
   scenery: [],
   items: [],
+  monsters: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -110,7 +142,7 @@ export const LIMINAL_GAP_ROOM: GeneratedRoom = {
 
 const ROOM_SCHEMA = {
   type: 'object',
-  required: ['name', 'fixed_description', 'exits', 'scenery', 'items'],
+  required: ['name', 'fixed_description', 'exits', 'scenery', 'items', 'monsters'],
   properties: {
     name: { type: 'string' },
     fixed_description: { type: 'string' },
@@ -139,6 +171,32 @@ const ROOM_SCHEMA = {
           damage_min: { type: 'number' },
           damage_max: { type: 'number' },
           type: { type: 'string' },
+        },
+      },
+    },
+    monsters: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'inspection_description', 'room_blurb', 'hp', 'damage_min', 'damage_max', 'drop'],
+        properties: {
+          name: { type: 'string' },
+          inspection_description: { type: 'string' },
+          room_blurb: { type: 'string' },
+          hp: { type: 'number' },
+          damage_min: { type: 'number' },
+          damage_max: { type: 'number' },
+          drop: {
+            type: 'object',
+            required: ['name', 'inspection_description', 'room_blurb', 'damage_min', 'damage_max'],
+            properties: {
+              name: { type: 'string' },
+              inspection_description: { type: 'string' },
+              room_blurb: { type: 'string' },
+              damage_min: { type: 'number' },
+              damage_max: { type: 'number' },
+            },
+          },
         },
       },
     },
@@ -189,6 +247,7 @@ export function createStubLLM(options: StubLLMOptions = {}): LLMFunction {
       exits,
       scenery: [],
       items: [],
+      monsters: [],
     };
 
     return JSON.stringify(room);
@@ -251,6 +310,7 @@ export function buildGenerationPrompt(
     previousRoomDescription,
     directionTraveled,
     neighborState = {},
+    monsterBounds,
   } = context;
 
   const parts: string[] = [];
@@ -303,7 +363,11 @@ export function buildGenerationPrompt(
     '{ "name": string, "fixed_description": string, "exits": string[], ' +
     '"scenery": [{ "name": string, "inspection_description": string, "room_blurb": string }], ' +
     '"items": [{ "name": string, "inspection_description": string, "room_blurb": string, ' +
-    '"damage_min": number, "damage_max": number, "type": "weapon" }] }',
+    '"damage_min": number, "damage_max": number, "type": "weapon" }], ' +
+    '"monsters": [{ "name": string, "inspection_description": string, "room_blurb": string, ' +
+    '"hp": number, "damage_min": number, "damage_max": number, ' +
+    '"drop": { "name": string, "inspection_description": string, "room_blurb": string, ' +
+    '"damage_min": number, "damage_max": number } }] }',
   );
   parts.push(
     'Include 0–3 scenery items (permanent fixtures like furniture, carvings, doors, torches). ' +
@@ -317,6 +381,26 @@ export function buildGenerationPrompt(
     '"inspection_description" is 2–3 sentences of close detail when examined. ' +
     'type must always be "weapon".',
   );
+
+  // ── Monster generation instruction ───────────────────────────────────────
+  if (monsterBounds) {
+    parts.push('');
+    parts.push(
+      `Include 0 or 1 monster (hostile creature) in the "monsters" array. ` +
+      `About 50% of rooms should have a monster. ` +
+      `Monster hp MUST be between ${monsterBounds.hp_min} and ${monsterBounds.hp_max}. ` +
+      `Monster damage_min MUST be ${monsterBounds.damage_min}, damage_max MUST be ${monsterBounds.damage_max}. ` +
+      `The monster's "drop" is a weapon that appears after the monster dies; ` +
+      `drop damage_min MUST be between ${monsterBounds.drop_damage_min} and ${monsterBounds.drop_damage_max}, ` +
+      `drop damage_max MUST be between ${monsterBounds.drop_damage_min} and ${monsterBounds.drop_damage_max}. ` +
+      `"room_blurb" for the monster is a 1-sentence description of its presence in the room. ` +
+      `"inspection_description" is 2–3 sentences when examined. ` +
+      `The drop's "room_blurb" is written for AFTER the monster is dead (e.g. "A rusty sword lies where the goblin fell."). ` +
+      `If no monster is desired, use an empty array.`,
+    );
+  } else {
+    parts.push('Include an empty "monsters" array: [].');
+  }
 
   return parts.join('\n');
 }
@@ -355,6 +439,7 @@ export async function generateRoom(options: GenerateRoomOptions): Promise<Genera
       exits: filtered,
       scenery: result.value.scenery ?? [],
       items: result.value.items ?? [],
+      monsters: result.value.monsters ?? [],
     },
   };
 }

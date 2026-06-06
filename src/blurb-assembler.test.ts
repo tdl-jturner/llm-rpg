@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assembleBlurb, type SceneryBlurb, type ItemBlurb } from './blurb-assembler';
+import { assembleBlurb, type SceneryBlurb, type ItemBlurb, type MonsterBlurb } from './blurb-assembler';
 
 describe('assembleBlurb — fixed_description only', () => {
   it('returns fixed_description when provided', () => {
@@ -55,6 +55,29 @@ describe('assembleBlurb — with items', () => {
   it('returns only fixed_description when item list is empty', () => {
     const result = assembleBlurb({ fixed_description: 'A dim room.' }, { items: [] });
     expect(result).toBe('A dim room.');
+  });
+});
+
+describe('assembleBlurb — with monsters', () => {
+  it('appends monster room_blurb between items and scenery', () => {
+    const items: ItemBlurb[] = [{ name: 'dagger', room_blurb: 'A dagger lies here.', disturbed: false }];
+    const monsters: MonsterBlurb[] = [{ room_blurb: 'A goblin crouches in the corner.' }];
+    const scenery: SceneryBlurb[] = [{ room_blurb: 'Carved runes cover the walls.' }];
+    const result = assembleBlurb({ fixed_description: 'A dim room.' }, { items, monsters, scenery });
+    expect(result).toBe(
+      'A dim room.\nA dagger lies here.\nA goblin crouches in the corner.\nCarved runes cover the walls.',
+    );
+  });
+
+  it('returns only fixed_description when monsters array is empty', () => {
+    const result = assembleBlurb({ fixed_description: 'A dim room.' }, { monsters: [] });
+    expect(result).toBe('A dim room.');
+  });
+
+  it('skips monster blurb if room_blurb is empty string', () => {
+    const monsters: MonsterBlurb[] = [{ room_blurb: '' }];
+    const result = assembleBlurb({ fixed_description: 'A room.' }, { monsters });
+    expect(result).toBe('A room.');
   });
 });
 

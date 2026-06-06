@@ -7,10 +7,13 @@ import { directionToOffset, reciprocalDirection, needsRetroBackExit } from './gr
 import type { Coords } from './grid-topology';
 import { generateRoom, LIMINAL_GAP_ROOM } from './room-generator';
 import type { NeighborState } from './room-generator';
+import { computeMonsterBounds, FIST_DAMAGE_MIN as BALANCE_FIST_MIN, FIST_DAMAGE_MAX as BALANCE_FIST_MAX } from './balance-calculator';
 import type { LLMFunction } from './json-retry-runner';
 import type { EventLogger } from './event-logger';
 import { selectBestWeapon, shouldAutoEquip } from './auto-equip';
 import type { WeaponCandidate } from './auto-equip';
+import { resolveCombat, FIST_DAMAGE_MIN, FIST_DAMAGE_MAX } from './combat-resolver';
+import type { CombatResult } from './combat-resolver';
 
 export interface Room {
   id: number;
@@ -55,6 +58,32 @@ export interface ItemRow {
   disturbed: number; // 0 = false, 1 = true (SQLite boolean)
   inspection_description: string;
   room_blurb: string;
+}
+
+export interface MonsterRow {
+  id: number;
+  name: string;
+  location: string;
+  hp: number;
+  max_hp: number;
+  damage_min: number;
+  damage_max: number;
+  inspection_description: string;
+  room_blurb: string;
+  engaged: number; // 0 = false, 1 = true
+}
+
+export interface AttackResult extends CombatResult {
+  /** Updated player HP after the exchange. */
+  newPlayerHp: number;
+  /** Updated monster HP after the exchange (0 if dead). */
+  newMonsterHp: number;
+}
+
+export interface PartingHitResult {
+  monster_damage_dealt: number;
+  player_died: boolean;
+  newPlayerHp: number;
 }
 
 export interface WorldDB {
@@ -103,6 +132,33 @@ export interface WorldDB {
    * Returns the item row that was dropped.
    */
   dropItem(itemId: number): ItemRow;
+
+  /** All monsters alive in the given room (location = "room:<roomId>"). */
+  getMonstersInRoom(roomId: number): MonsterRow[];
+
+  /** The monster with the given ID, or undefined if not found. */
+  getMonster(monsterId: number): MonsterRow | undefined;
+
+  /**
+   * Execute one ATTACK exchange against the given monster.
+   * Applies HP deltas, sets monster engaged=1.
+   * If monster dies: sets location to "dead:<id>", moves drop to "room:<roomId>".
+   * If player dies: triggers respawn.
+   */
+  attackMonster(monsterId: number): AttackResult;
+
+  /**
+   * Execute a parting hit from all engaged monsters in the current room.
+   * Called when the player moves out of a room with engaged monsters.
+   * Returns the combined result (worst case for player).
+   */
+  applyPartingHits(): PartingHitResult;
+
+  /**
+   * Respawn the player: reset HP to max_hp, move to starting room (0,0,0),
+   * refill HP of all monsters that were ever engaged.
+   */
+  respawnPlayer(): Room;
 }
 
 /**
@@ -159,6 +215,23 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
   const stmtGetPlayerState = db.prepare('SELECT * FROM player_state WHERE id = 1');
   const stmtUpdateItemLocation = db.prepare('UPDATE items SET location = ?, disturbed = ? WHERE id = ?');
   const stmtUpdateEquippedWeapon = db.prepare('UPDATE player_state SET equipped_weapon_id = ? WHERE id = 1');
+  const stmtGetMonstersInRoom = db.prepare(
+    'SELECT id, name, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged FROM monsters WHERE location = ? ORDER BY id ASC',
+  );
+  const stmtGetMonster = db.prepare(
+    'SELECT id, name, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged FROM monsters WHERE id = ?',
+  );
+  const stmtUpdateMonsterHp = db.prepare('UPDATE monsters SET hp = ? WHERE id = ?');
+  const stmtUpdateMonsterLocation = db.prepare('UPDATE monsters SET location = ? WHERE id = ?');
+  const stmtSetMonsterEngaged = db.prepare('UPDATE monsters SET engaged = ? WHERE id = ?');
+  const stmtUpdatePlayerHp = db.prepare('UPDATE player_state SET hp = ? WHERE id = 1');
+  const stmtGetStartingRoom = db.prepare('SELECT * FROM rooms WHERE x = 0 AND y = 0 AND z = 0');
+  const stmtGetEngagedMonsters = db.prepare('SELECT id FROM monsters WHERE engaged = 1');
+  const stmtRefillMonsterHp = db.prepare('UPDATE monsters SET hp = max_hp WHERE engaged = 1');
+  const stmtClearAllEngaged = db.prepare('UPDATE monsters SET engaged = 0');
+  const stmtGetDropForMonster = db.prepare(
+    'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb FROM items WHERE location = ?',
+  );
 
   // ── Startup: seed exits from frontmatter for the starting room ───────────
   // The starting room was inserted without exits (they have no target room_id yet).
@@ -245,6 +318,113 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       }
 
       return { ...item, location: `room:${currentRoomId}`, disturbed: 1 };
+    },
+
+    getMonstersInRoom(roomId: number): MonsterRow[] {
+      return stmtGetMonstersInRoom.all(`room:${roomId}`) as MonsterRow[];
+    },
+
+    getMonster(monsterId: number): MonsterRow | undefined {
+      return stmtGetMonster.get(monsterId) as MonsterRow | undefined;
+    },
+
+    attackMonster(monsterId: number): AttackResult {
+      const monster = stmtGetMonster.get(monsterId) as MonsterRow;
+      const player = stmtGetPlayerState.get() as PlayerState;
+
+      // Build player combat stats
+      let playerDmgMin = FIST_DAMAGE_MIN;
+      let playerDmgMax = FIST_DAMAGE_MAX;
+      if (player.equipped_weapon_id != null) {
+        const weapon = stmtGetItem.get(player.equipped_weapon_id) as ItemRow | undefined;
+        if (weapon) {
+          playerDmgMin = weapon.damage_min;
+          playerDmgMax = weapon.damage_max;
+        }
+      }
+
+      const combatResult = resolveCombat(
+        { hp: player.hp, max_hp: player.max_hp, damage_min: playerDmgMin, damage_max: playerDmgMax },
+        { id: monster.id, hp: monster.hp, max_hp: monster.max_hp, damage_min: monster.damage_min, damage_max: monster.damage_max },
+      );
+
+      const newMonsterHp = Math.max(0, monster.hp - combatResult.player_damage_dealt);
+      const newPlayerHp = Math.max(0, player.hp - combatResult.monster_damage_dealt);
+
+      db.transaction(() => {
+        // Mark monster as engaged
+        stmtSetMonsterEngaged.run(1, monsterId);
+
+        if (combatResult.monster_dead) {
+          // Move monster to graveyard
+          stmtUpdateMonsterHp.run(0, monsterId);
+          stmtUpdateMonsterLocation.run(`dead:${monsterId}`, monsterId);
+
+          // Move monster's drop from "monster:<id>" to "room:<roomId>"
+          const drop = stmtGetDropForMonster.get(`monster:${monsterId}`) as ItemRow | undefined;
+          if (drop) {
+            stmtUpdateItemLocation.run(`room:${player.current_room_id}`, 0, drop.id);
+          }
+        } else {
+          stmtUpdateMonsterHp.run(newMonsterHp, monsterId);
+        }
+
+        // Apply player damage
+        stmtUpdatePlayerHp.run(newPlayerHp);
+
+        if (combatResult.player_died) {
+          // Respawn happens in the calling layer — handled by respawnPlayer()
+        }
+      })();
+
+      return {
+        ...combatResult,
+        newPlayerHp,
+        newMonsterHp,
+      };
+    },
+
+    applyPartingHits(): PartingHitResult {
+      const player = stmtGetPlayerState.get() as PlayerState;
+      const engagedMonsters = stmtGetMonstersInRoom.all(`room:${player.current_room_id}`) as MonsterRow[];
+      const activeEngaged = engagedMonsters.filter((m) => m.engaged === 1);
+
+      if (activeEngaged.length === 0) {
+        return { monster_damage_dealt: 0, player_died: false, newPlayerHp: player.hp };
+      }
+
+      // Each engaged monster gets a parting shot
+      let totalDamage = 0;
+      for (const monster of activeEngaged) {
+        const dmg = Math.floor(Math.random() * (monster.damage_max - monster.damage_min + 1)) + monster.damage_min;
+        totalDamage += dmg;
+      }
+
+      const newPlayerHp = Math.max(0, player.hp - totalDamage);
+      stmtUpdatePlayerHp.run(newPlayerHp);
+
+      return {
+        monster_damage_dealt: totalDamage,
+        player_died: newPlayerHp <= 0,
+        newPlayerHp,
+      };
+    },
+
+    respawnPlayer(): Room {
+      const startingRoom = stmtGetStartingRoom.get() as Room;
+
+      db.transaction(() => {
+        // Reset player HP and position
+        db.prepare('UPDATE player_state SET hp = max_hp, current_room_id = ? WHERE id = 1').run(startingRoom.id);
+
+        // Refill all engaged monsters
+        stmtRefillMonsterHp.run();
+
+        // Clear engaged flags
+        stmtClearAllEngaged.run();
+      })();
+
+      return startingRoom;
     },
 
     async movePlayer(
@@ -364,6 +544,19 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         neighborState[d] = neighborRoom ? `existing room named ${neighborRoom.name}` : 'empty';
       }
 
+      // Compute monster balance bounds using player's current equipped weapon
+      const playerStateForGen = stmtGetPlayerState.get() as PlayerState;
+      let genWeaponMin = BALANCE_FIST_MIN;
+      let genWeaponMax = BALANCE_FIST_MAX;
+      if (playerStateForGen.equipped_weapon_id != null) {
+        const equippedForGen = stmtGetItem.get(playerStateForGen.equipped_weapon_id) as ItemRow | undefined;
+        if (equippedForGen) {
+          genWeaponMin = equippedForGen.damage_min;
+          genWeaponMax = equippedForGen.damage_max;
+        }
+      }
+      const monsterBounds = computeMonsterBounds(genWeaponMin, genWeaponMax, playerStateForGen.max_hp);
+
       const genResult = await generateRoom({
         coords: targetCoords,
         allowableExits,
@@ -373,6 +566,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           previousRoomDescription: fromRoom.fixed_description,
           directionTraveled: direction,
           neighborState,
+          monsterBounds,
         },
       });
 
@@ -440,6 +634,43 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
               0,
               item.inspection_description,
               item.room_blurb,
+            );
+          }
+        }
+
+        // Persist generated monsters (and their drops)
+        if (roomToCommit.monsters && roomToCommit.monsters.length > 0) {
+          const stmtInsertMonster = db.prepare(
+            'INSERT INTO monsters (name, description, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
+          );
+          const stmtInsertDrop = db.prepare(
+            'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          );
+          for (const monster of roomToCommit.monsters) {
+            const monsterResult = stmtInsertMonster.run(
+              monster.name,
+              monster.inspection_description,
+              `room:${newRoomId}`,
+              monster.hp,
+              monster.hp, // max_hp = generated hp
+              monster.damage_min,
+              monster.damage_max,
+              monster.inspection_description,
+              monster.room_blurb,
+            );
+            const monsterId = monsterResult.lastInsertRowid as number;
+
+            // Persist the drop with location "monster:<id>"
+            stmtInsertDrop.run(
+              monster.drop.name,
+              monster.drop.inspection_description,
+              `monster:${monsterId}`,
+              monster.drop.damage_min,
+              monster.drop.damage_max,
+              'weapon',
+              0,
+              monster.drop.inspection_description,
+              monster.drop.room_blurb,
             );
           }
         }

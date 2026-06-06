@@ -4,7 +4,7 @@ import { assembleBlurb } from './blurb-assembler';
 import { getRefusal } from './refusal-bank';
 import { resolveTarget } from './target-resolver';
 import type { Entity } from './target-resolver';
-import type { WorldDB, ItemRow } from './world-db';
+import type { WorldDB, ItemRow, MonsterRow } from './world-db';
 import type { LLMFunction } from './json-retry-runner';
 import type { EventLogger } from './event-logger';
 
@@ -14,8 +14,8 @@ import type { EventLogger } from './event-logger';
  */
 interface DisambiguationState {
   candidates: Entity[];
-  /** The original intent that triggered disambiguation ('look_at' | 'take') */
-  pendingIntent: 'look_at' | 'take';
+  /** The original intent that triggered disambiguation ('look_at' | 'take' | 'attack') */
+  pendingIntent: 'look_at' | 'take' | 'attack';
 }
 
 // Module-level disambiguation state (single player game — one session at a time)
@@ -52,7 +52,8 @@ export async function handleSubmitInput(
 
     if (picked) {
       // Valid pick — resolve the original intent
-      return { narrative: [`> ${text}`, resolveEntityIntent(saved.pendingIntent, picked, worldDB)] };
+      const result = await resolveEntityIntentAsync(saved.pendingIntent, picked, worldDB);
+      return { narrative: [`> ${text}`, ...result] };
     } else {
       // Invalid pick — cancel disambiguation and treat as fresh input
       // Fall through to normal intent parsing below
@@ -67,8 +68,10 @@ export async function handleSubmitInput(
       const room = worldDB.getCurrentRoom();
       const scenery = worldDB.getSceneryForRoom(room.id);
       const items = worldDB.getItemsInRoom(room.id);
+      const monsters = worldDB.getMonstersInRoom(room.id);
       narrative.push(assembleBlurb(room, {
         items: items.map((i) => ({ name: i.name, room_blurb: i.room_blurb, disturbed: i.disturbed === 1 })),
+        monsters: monsters.map((m) => ({ room_blurb: m.room_blurb })),
         scenery,
       }));
       break;
@@ -175,6 +178,20 @@ export async function handleSubmitInput(
         break;
       }
 
+      // Apply parting hits from engaged monsters before moving
+      const partingHits = worldDB.applyPartingHits();
+      if (partingHits.monster_damage_dealt > 0) {
+        narrative.push(
+          `As you leave, something strikes you for ${partingHits.monster_damage_dealt} damage.`,
+        );
+        if (partingHits.player_died) {
+          const startRoom = worldDB.respawnPlayer();
+          narrative.push('Everything goes black. You wake at the threshold.');
+          narrative.push(assembleBlurb(startRoom, {}));
+          break;
+        }
+      }
+
       const result = await worldDB.movePlayer(intent.direction, llmFn, logger);
 
       if (!result.ok) {
@@ -189,12 +206,83 @@ export async function handleSubmitInput(
         const room = result.room;
         const scenery = worldDB.getSceneryForRoom(room.id);
         const items = worldDB.getItemsInRoom(room.id);
+        const monsters = worldDB.getMonstersInRoom(room.id);
         narrative.push(assembleBlurb(room, {
           items: items.map((i) => ({ name: i.name, room_blurb: i.room_blurb, disturbed: i.disturbed === 1 })),
+          monsters: monsters.map((m) => ({ room_blurb: m.room_blurb })),
           scenery,
         }));
         if (result.generationFailed) {
           narrative.push('(World generation hiccup logged.)');
+        }
+      }
+      break;
+    }
+
+    case 'attack': {
+      const room = worldDB.getCurrentRoom();
+      const monstersInRoom = worldDB.getMonstersInRoom(room.id);
+
+      if (monstersInRoom.length === 0) {
+        narrative.push(getRefusal('nothing_to_attack'));
+        break;
+      }
+
+      let targetMonster: MonsterRow | undefined;
+
+      if (intent.target === null) {
+        // Bare ATTACK — auto-target if exactly one monster is present
+        if (monstersInRoom.length === 1) {
+          targetMonster = monstersInRoom[0];
+        } else {
+          // Multiple monsters — request disambiguation
+          const candidateNames = monstersInRoom.map((m) => m.name).join(', ');
+          narrative.push(`Which do you mean: ${candidateNames}?`);
+          const monsterEntities: Entity[] = monstersInRoom.map(monsterRowToEntity);
+          disambiguationState = { candidates: monsterEntities, pendingIntent: 'attack' };
+          break;
+        }
+      } else {
+        // Named target — resolve it
+        const monsterEntities: Entity[] = monstersInRoom.map(monsterRowToEntity);
+        const result = resolveTarget(intent.target, monsterEntities);
+
+        if (result.type === 'no_match') {
+          narrative.push(getRefusal('nothing_here_named'));
+          break;
+        } else if (result.type === 'ambiguous') {
+          const candidateNames = result.candidates.map((c) => c.name).join(', ');
+          narrative.push(`Which do you mean: ${candidateNames}?`);
+          disambiguationState = { candidates: result.candidates, pendingIntent: 'attack' };
+          break;
+        } else {
+          targetMonster = worldDB.getMonster(result.entity.id);
+        }
+      }
+
+      if (!targetMonster) {
+        narrative.push(getRefusal('nothing_to_attack'));
+        break;
+      }
+
+      const attackResult = worldDB.attackMonster(targetMonster.id);
+
+      // Render player's hit
+      narrative.push(
+        `You hit the ${targetMonster.name} for ${attackResult.player_damage_dealt} damage.`,
+      );
+
+      if (attackResult.monster_dead) {
+        narrative.push(`The ${targetMonster.name} collapses.`);
+      } else if (attackResult.monster_damage_dealt > 0) {
+        narrative.push(
+          `The ${targetMonster.name} strikes back for ${attackResult.monster_damage_dealt} damage.`,
+        );
+
+        if (attackResult.player_died) {
+          const startRoom = worldDB.respawnPlayer();
+          narrative.push('Everything goes black. You wake at the threshold.');
+          narrative.push(assembleBlurb(startRoom, {}));
         }
       }
       break;
@@ -212,12 +300,13 @@ export async function handleSubmitInput(
 
 /**
  * Builds the full set of in-scope entities for target resolution.
- * Includes items in the room AND items in the player's inventory (for LOOK AT).
+ * Includes items in the room, items in the player's inventory, and monsters in the room.
  */
 function buildScopeEntities(worldDB: WorldDB, roomId: number): Entity[] {
   const scenery = worldDB.getSceneryForRoom(roomId);
   const roomItems = worldDB.getItemsInRoom(roomId);
   const inventory = worldDB.getPlayerInventory();
+  const monsters = worldDB.getMonstersInRoom(roomId);
 
   const sceneryEntities: Entity[] = scenery.map((s) => ({
     id: s.id,
@@ -229,8 +318,9 @@ function buildScopeEntities(worldDB: WorldDB, roomId: number): Entity[] {
 
   const roomItemEntities: Entity[] = roomItems.map(itemRowToEntity);
   const inventoryEntities: Entity[] = inventory.map(itemRowToEntity);
+  const monsterEntities: Entity[] = monsters.map(monsterRowToEntity);
 
-  return [...roomItemEntities, ...inventoryEntities, ...sceneryEntities];
+  return [...roomItemEntities, ...inventoryEntities, ...monsterEntities, ...sceneryEntities];
 }
 
 function itemRowToEntity(item: ItemRow): Entity {
@@ -245,21 +335,49 @@ function itemRowToEntity(item: ItemRow): Entity {
 
 /**
  * Resolves the original intent for a definitively-identified entity.
- * Used after disambiguation succeeds.
+ * Used after disambiguation succeeds. Returns an array of narrative lines.
  */
-function resolveEntityIntent(intentType: 'look_at' | 'take', entity: Entity, worldDB: WorldDB): string {
+async function resolveEntityIntentAsync(
+  intentType: 'look_at' | 'take' | 'attack',
+  entity: Entity,
+  worldDB: WorldDB,
+): Promise<string[]> {
   if (intentType === 'look_at') {
-    return entity.inspectionDescription;
+    return [entity.inspectionDescription];
   }
+
+  if (intentType === 'attack') {
+    const monster = worldDB.getMonster(entity.id);
+    if (!monster) return [getRefusal('nothing_to_attack')];
+
+    const attackResult = worldDB.attackMonster(monster.id);
+    const lines: string[] = [
+      `You hit the ${monster.name} for ${attackResult.player_damage_dealt} damage.`,
+    ];
+    if (attackResult.monster_dead) {
+      lines.push(`The ${monster.name} collapses.`);
+    } else if (attackResult.monster_damage_dealt > 0) {
+      lines.push(
+        `The ${monster.name} strikes back for ${attackResult.monster_damage_dealt} damage.`,
+      );
+      if (attackResult.player_died) {
+        const startRoom = worldDB.respawnPlayer();
+        lines.push('Everything goes black. You wake at the threshold.');
+        lines.push(assembleBlurb(startRoom, {}));
+      }
+    }
+    return lines;
+  }
+
   // take
   if (entity.kind === 'scenery') {
-    return entity.roomBlurb || getRefusal('cannot_take_scenery');
+    return [entity.roomBlurb || getRefusal('cannot_take_scenery')];
   }
   if (entity.kind === 'item') {
     const inventory = worldDB.getPlayerInventory();
     const alreadyHave = inventory.find((i) => i.id === entity.id);
     if (alreadyHave) {
-      return `You already have the ${entity.name}.`;
+      return [`You already have the ${entity.name}.`];
     }
     const takenItem = worldDB.takeItem(entity.id);
     let msg = `You take the ${takenItem.name}.`;
@@ -267,7 +385,17 @@ function resolveEntityIntent(intentType: 'look_at' | 'take', entity: Entity, wor
     if (equipped && equipped.id === takenItem.id) {
       msg += ' You wield it.';
     }
-    return msg;
+    return [msg];
   }
-  return getRefusal('cannot_take_scenery');
+  return [getRefusal('cannot_take_scenery')];
+}
+
+function monsterRowToEntity(monster: MonsterRow): Entity {
+  return {
+    id: monster.id,
+    name: monster.name,
+    kind: 'monster' as const,
+    inspectionDescription: monster.inspection_description,
+    roomBlurb: monster.room_blurb,
+  };
 }

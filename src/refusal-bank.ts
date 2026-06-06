@@ -7,6 +7,7 @@ const DEFAULTS: Record<string, string> = {
   already_have: "You already have that.",
   cant_drop_what_you_dont_have: "You don't have that.",
   inventory_empty: "You aren't carrying anything.",
+  nothing_to_attack: "There's nothing here to fight.",
 };
 
 export function getRefusal(key: string): string {
