@@ -55,6 +55,32 @@ export class EventLogger {
     this.write(record);
   }
 
+  logInputRaw(event: { raw: string }): void {
+    const record = {
+      event: 'input.raw',
+      ts: new Date().toISOString(),
+      raw: event.raw,
+    };
+    this.write(record);
+  }
+
+  logInputParsed(event: {
+    raw: string;
+    intent: unknown;
+    path: 'deterministic' | 'llm';
+    instrument?: string;
+  }): void {
+    const record = {
+      event: 'input.parsed',
+      ts: new Date().toISOString(),
+      raw: event.raw,
+      intent: event.intent,
+      path: event.path,
+      ...(event.instrument !== undefined ? { instrument: event.instrument } : {}),
+    };
+    this.write(record);
+  }
+
   logError(event: { message: string; detail?: string }): void {
     const record = {
       event: 'error',

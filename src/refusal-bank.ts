@@ -8,6 +8,7 @@ const DEFAULTS: Record<string, string> = {
   cant_drop_what_you_dont_have: "You don't have that.",
   inventory_empty: "You aren't carrying anything.",
   nothing_to_attack: "There's nothing here to fight.",
+  chained_command_rejected: "Please do one thing at a time.",
 };
 
 export function getRefusal(key: string): string {

@@ -1,12 +1,15 @@
+/** Optional instrument field added by the NL parser when the player specifies a tool/weapon. */
+export type IntentBase = { instrument?: string };
+
 export type Intent =
-  | { type: 'look' }
-  | { type: 'look_at'; target: string }
-  | { type: 'take'; target: string }
-  | { type: 'drop'; target: string }
-  | { type: 'inventory' }
-  | { type: 'move'; direction: string }
-  | { type: 'attack'; target: string | null }
-  | { type: 'unknown' };
+  | (IntentBase & { type: 'look' })
+  | (IntentBase & { type: 'look_at'; target: string })
+  | (IntentBase & { type: 'take'; target: string })
+  | (IntentBase & { type: 'drop'; target: string })
+  | (IntentBase & { type: 'inventory' })
+  | (IntentBase & { type: 'move'; direction: string })
+  | (IntentBase & { type: 'attack'; target: string | null })
+  | (IntentBase & { type: 'unknown' });
 
 const DIRECTIONS: Record<string, string> = {
   n: 'north',

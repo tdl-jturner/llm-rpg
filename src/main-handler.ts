@@ -1,5 +1,7 @@
 import type { SubmitInputResponse } from './shared/ipc';
 import { parseIntent } from './intent-parser';
+import type { Intent } from './intent-parser';
+import { parseIntentWithNl } from './nl-intent-parser';
 import { assembleBlurb } from './blurb-assembler';
 import { getRefusal } from './refusal-bank';
 import { resolveTarget } from './target-resolver';
@@ -36,6 +38,7 @@ export async function handleSubmitInput(
   worldDB?: WorldDB,
   llmFn?: LLMFunction,
   logger?: EventLogger,
+  worldBody?: string,
 ): Promise<SubmitInputResponse> {
   if (!worldDB) {
     // Fallback for tests that don't provide a DB
@@ -60,7 +63,35 @@ export async function handleSubmitInput(
     }
   }
 
-  const intent = parseIntent(text);
+  // ── Logging: raw input ────────────────────────────────────────────────────
+  logger?.logInputRaw({ raw: text });
+
+  // ── Intent parsing ────────────────────────────────────────────────────────
+  let intent = parseIntent(text);
+  let parsePath: 'deterministic' | 'llm' = 'deterministic';
+
+  if (intent.type === 'unknown' && llmFn && worldBody) {
+    // Deterministic parser couldn't match — try the NL fallback
+    const nlResult = await parseIntentWithNl(text, { llmFn, worldBody });
+
+    if (nlResult === 'chained') {
+      // Multi-action input — reject immediately
+      logger?.logInputParsed({ raw: text, intent: { type: 'chained' }, path: 'llm' });
+      return { narrative: [`> ${text}`, getRefusal('chained_command_rejected')] };
+    }
+
+    intent = nlResult as Intent;
+    parsePath = 'llm';
+  }
+
+  // Log the resolved intent
+  logger?.logInputParsed({
+    raw: text,
+    intent,
+    path: parsePath,
+    ...(intent.instrument !== undefined ? { instrument: intent.instrument } : {}),
+  });
+
   const narrative: string[] = [`> ${text}`];
 
   switch (intent.type) {
