@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": ".vite/build",
+    "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {}
+  },
+  "include": ["src/**/*", "forge.config.ts", "vite.*.config.ts"]
+}
