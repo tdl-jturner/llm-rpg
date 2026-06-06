@@ -9,7 +9,7 @@ describe('MigrationRunner', () => {
     db?.close();
   });
 
-  it('creates all tables (v1 + v2) in a fresh in-memory DB', () => {
+  it('creates all tables (v1 + v2 + v3) in a fresh in-memory DB', () => {
     db = new Database(':memory:');
     runMigrations(db);
 
@@ -28,12 +28,12 @@ describe('MigrationRunner', () => {
     expect(names).toContain('room_allowed_exits');
   });
 
-  it('sets schema_version to 2 after migration', () => {
+  it('sets schema_version to 3 after migration', () => {
     db = new Database(':memory:');
     runMigrations(db);
 
     const row = db.prepare('SELECT version FROM schema_version').get() as { version: number };
-    expect(row.version).toBe(2);
+    expect(row.version).toBe(EXPECTED_SCHEMA_VERSION);
   });
 
   it('is idempotent — running twice does not throw', () => {

@@ -49,6 +49,76 @@ describe('parseIntent', () => {
     });
   });
 
+  describe('LOOK AT / EXAMINE / X', () => {
+    it('parses "look at altar"', () => {
+      expect(parseIntent('look at altar')).toEqual<Intent>({ type: 'look_at', target: 'altar' });
+    });
+
+    it('parses "LOOK AT altar" (case-insensitive, lowercased target)', () => {
+      expect(parseIntent('LOOK AT ALTAR')).toEqual<Intent>({ type: 'look_at', target: 'altar' });
+    });
+
+    it('parses "examine iron door"', () => {
+      expect(parseIntent('examine iron door')).toEqual<Intent>({
+        type: 'look_at',
+        target: 'iron door',
+      });
+    });
+
+    it('parses "x altar"', () => {
+      expect(parseIntent('x altar')).toEqual<Intent>({ type: 'look_at', target: 'altar' });
+    });
+
+    it('parses "X mossy wall" (case-insensitive)', () => {
+      expect(parseIntent('X mossy wall')).toEqual<Intent>({
+        type: 'look_at',
+        target: 'mossy wall',
+      });
+    });
+
+    it('parses multi-word target with "look at"', () => {
+      expect(parseIntent('look at ancient stone altar')).toEqual<Intent>({
+        type: 'look_at',
+        target: 'ancient stone altar',
+      });
+    });
+  });
+
+  describe('TAKE / GET / GRAB / PICK UP', () => {
+    it('parses "take sword"', () => {
+      expect(parseIntent('take sword')).toEqual<Intent>({ type: 'take', target: 'sword' });
+    });
+
+    it('parses "TAKE SWORD" (case-insensitive, lowercased target)', () => {
+      expect(parseIntent('TAKE SWORD')).toEqual<Intent>({ type: 'take', target: 'sword' });
+    });
+
+    it('parses "get iron key"', () => {
+      expect(parseIntent('get iron key')).toEqual<Intent>({
+        type: 'take',
+        target: 'iron key',
+      });
+    });
+
+    it('parses "grab dagger"', () => {
+      expect(parseIntent('grab dagger')).toEqual<Intent>({ type: 'take', target: 'dagger' });
+    });
+
+    it('parses "pick up rusty sword"', () => {
+      expect(parseIntent('pick up rusty sword')).toEqual<Intent>({
+        type: 'take',
+        target: 'rusty sword',
+      });
+    });
+
+    it('parses multi-word target with "take"', () => {
+      expect(parseIntent('take ancient amulet')).toEqual<Intent>({
+        type: 'take',
+        target: 'ancient amulet',
+      });
+    });
+  });
+
   describe('unknown', () => {
     it('returns unknown for unrecognized input', () => {
       expect(parseIntent('xyzzy')).toEqual<Intent>({ type: 'unknown' });

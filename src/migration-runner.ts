@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 
-export const EXPECTED_SCHEMA_VERSION = 2;
+export const EXPECTED_SCHEMA_VERSION = 3;
 
 const V1_SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -71,6 +71,19 @@ CREATE TABLE IF NOT EXISTS room_allowed_exits (
 );
 `;
 
+/**
+ * V3 adds inspection_description and room_blurb columns to the scenery table.
+ * - inspection_description: the full text returned by LOOK AT / EXAMINE / X
+ * - room_blurb: the short blurb appended to LOOK output (permanent, never disappears)
+ *
+ * The original 'description' column is kept for backward compatibility
+ * (existing rows will have inspection_description = '' until re-seeded).
+ */
+const V3_ADDITIONS = `
+ALTER TABLE scenery ADD COLUMN inspection_description TEXT NOT NULL DEFAULT '';
+ALTER TABLE scenery ADD COLUMN room_blurb TEXT NOT NULL DEFAULT '';
+`;
+
 export function runMigrations(db: Database.Database): void {
   // Check if schema_version exists
   const tableExists = db
@@ -91,14 +104,23 @@ export function runMigrations(db: Database.Database): void {
 
     if (row && row.version === EXPECTED_SCHEMA_VERSION) {
       // Already at latest — apply all CREATE TABLE IF NOT EXISTS idempotently
+      // (ALTER TABLE IF NOT EXISTS is not supported; skip V3 re-runs since columns already exist)
       db.exec(V1_SCHEMA);
       db.exec(V2_ADDITIONS);
       return;
     }
 
-    // V1 DB upgrading to V2
+    // V2 DB upgrading to V3
+    if (row && row.version === 2) {
+      applyV3Safely(db);
+      db.prepare('UPDATE schema_version SET version = ?').run(EXPECTED_SCHEMA_VERSION);
+      return;
+    }
+
+    // V1 DB upgrading to V2+V3
     if (row && row.version === 1) {
       db.exec(V2_ADDITIONS);
+      applyV3Safely(db);
       db.prepare('UPDATE schema_version SET version = ?').run(EXPECTED_SCHEMA_VERSION);
       return;
     }
@@ -107,10 +129,29 @@ export function runMigrations(db: Database.Database): void {
   // Fresh DB — run full schema
   db.exec(V1_SCHEMA);
   db.exec(V2_ADDITIONS);
+  applyV3Safely(db);
 
   // Seed schema_version if not set
   const existing = db.prepare('SELECT version FROM schema_version').get();
   if (!existing) {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(EXPECTED_SCHEMA_VERSION);
+  }
+}
+
+/**
+ * Applies V3 schema changes safely — SQLite doesn't support IF NOT EXISTS for
+ * ALTER TABLE ADD COLUMN, so we catch the "duplicate column" error and ignore it.
+ */
+function applyV3Safely(db: Database.Database): void {
+  for (const sql of V3_ADDITIONS.trim().split(';\n').filter(Boolean)) {
+    try {
+      db.exec(sql + ';');
+    } catch (err) {
+      // Ignore "duplicate column name" errors (column already added in a previous run)
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('duplicate column name')) {
+        throw err;
+      }
+    }
   }
 }

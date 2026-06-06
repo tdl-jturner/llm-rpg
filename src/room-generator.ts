@@ -21,10 +21,17 @@ import type { Coords } from './grid-topology';
 // Types
 // ---------------------------------------------------------------------------
 
+export interface GeneratedSceneryItem {
+  name: string;
+  inspection_description: string;
+  room_blurb: string;
+}
+
 export interface GeneratedRoom {
   name: string;
   fixed_description: string;
   exits: string[];
+  scenery?: GeneratedSceneryItem[];
 }
 
 export type GenerateRoomResult =
@@ -83,6 +90,7 @@ export const LIMINAL_GAP_ROOM: GeneratedRoom = {
   fixed_description:
     'A featureless gray space presses in around you. The way back is clear; nothing else is.',
   exits: [],
+  scenery: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -91,11 +99,23 @@ export const LIMINAL_GAP_ROOM: GeneratedRoom = {
 
 const ROOM_SCHEMA = {
   type: 'object',
-  required: ['name', 'fixed_description', 'exits'],
+  required: ['name', 'fixed_description', 'exits', 'scenery'],
   properties: {
     name: { type: 'string' },
     fixed_description: { type: 'string' },
     exits: { type: 'array', items: { type: 'string' } },
+    scenery: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'inspection_description', 'room_blurb'],
+        properties: {
+          name: { type: 'string' },
+          inspection_description: { type: 'string' },
+          room_blurb: { type: 'string' },
+        },
+      },
+    },
   },
 };
 
@@ -141,6 +161,7 @@ export function createStubLLM(options: StubLLMOptions = {}): LLMFunction {
       name: `Generated Room (${coordsStr})`,
       fixed_description: 'You step into an unremarkable space.',
       exits,
+      scenery: [],
     };
 
     return JSON.stringify(room);
@@ -251,7 +272,15 @@ export function buildGenerationPrompt(
 
   // ── JSON schema instruction ───────────────────────────────────────────────
   parts.push('Respond with ONLY a valid JSON object matching this schema (no extra text):');
-  parts.push('{ "name": string, "fixed_description": string, "exits": string[] }');
+  parts.push(
+    '{ "name": string, "fixed_description": string, "exits": string[], ' +
+    '"scenery": [{ "name": string, "inspection_description": string, "room_blurb": string }] }',
+  );
+  parts.push(
+    'Include 0–3 scenery items (permanent fixtures like furniture, carvings, doors, torches). ' +
+    '"room_blurb" is a 1-sentence presence note for the LOOK view. ' +
+    '"inspection_description" is 2–3 sentences of close detail when the player examines it.',
+  );
 
   return parts.join('\n');
 }
@@ -288,6 +317,7 @@ export async function generateRoom(options: GenerateRoomOptions): Promise<Genera
       name: result.value.name,
       fixed_description: result.value.fixed_description,
       exits: filtered,
+      scenery: result.value.scenery ?? [],
     },
   };
 }

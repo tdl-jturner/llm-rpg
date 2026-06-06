@@ -1,5 +1,7 @@
 export type Intent =
   | { type: 'look' }
+  | { type: 'look_at'; target: string }
+  | { type: 'take'; target: string }
   | { type: 'move'; direction: string }
   | { type: 'unknown' };
 
@@ -37,6 +39,36 @@ export function parseIntent(raw: string): Intent {
     if (dir !== undefined) {
       return { type: 'move', direction: dir };
     }
+  }
+
+  // LOOK AT <target>
+  const lookAtMatch = text.match(/^look\s+at\s+(.+)$/);
+  if (lookAtMatch) {
+    return { type: 'look_at', target: lookAtMatch[1].trim() };
+  }
+
+  // EXAMINE <target>
+  const examineMatch = text.match(/^examine\s+(.+)$/);
+  if (examineMatch) {
+    return { type: 'look_at', target: examineMatch[1].trim() };
+  }
+
+  // X <target>  (adventure shorthand for examine — note: must come after direction check)
+  const xMatch = text.match(/^x\s+(.+)$/);
+  if (xMatch) {
+    return { type: 'look_at', target: xMatch[1].trim() };
+  }
+
+  // TAKE / GET / GRAB <target>
+  const takeMatch = text.match(/^(?:take|get|grab)\s+(.+)$/);
+  if (takeMatch) {
+    return { type: 'take', target: takeMatch[1].trim() };
+  }
+
+  // PICK UP <target>
+  const pickUpMatch = text.match(/^pick\s+up\s+(.+)$/);
+  if (pickUpMatch) {
+    return { type: 'take', target: pickUpMatch[1].trim() };
   }
 
   return { type: 'unknown' };

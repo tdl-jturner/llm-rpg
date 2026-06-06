@@ -35,6 +35,14 @@ export type MoveResult =
   | { ok: true; room: Room; generated: boolean; generationFailed?: boolean }
   | { ok: false; reason: 'no_exit' | 'generation_failed'; error?: string };
 
+export interface SceneryRow {
+  id: number;
+  room_id: number;
+  name: string;
+  inspection_description: string;
+  room_blurb: string;
+}
+
 export interface WorldDB {
   db: Database.Database;
   getCurrentRoom(): Room;
@@ -52,6 +60,9 @@ export interface WorldDB {
 
   /** All canonical directions the current room declares as open exits. */
   getCurrentRoomExits(): string[];
+
+  /** All scenery items for the given room, in insertion order. */
+  getSceneryForRoom(roomId: number): SceneryRow[];
 }
 
 /**
@@ -93,6 +104,9 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
   const stmtUpdatePlayerRoom = db.prepare(
     'UPDATE player_state SET current_room_id = ? WHERE id = 1',
   );
+  const stmtGetScenery = db.prepare(
+    'SELECT id, room_id, name, inspection_description, room_blurb FROM scenery WHERE room_id = ? ORDER BY id ASC',
+  );
 
   // ── Startup: seed exits from frontmatter for the starting room ───────────
   // The starting room was inserted without exits (they have no target room_id yet).
@@ -110,6 +124,10 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       const player = stmtPlayerRoom.get() as { current_room_id: number };
       const rows = stmtGetExits.all(player.current_room_id) as { direction: string }[];
       return rows.map((r) => r.direction);
+    },
+
+    getSceneryForRoom(roomId: number): SceneryRow[] {
+      return stmtGetScenery.all(roomId) as SceneryRow[];
     },
 
     async movePlayer(
@@ -279,6 +297,16 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           stmtInsertAllowed.run(newRoomId, d);
         }
 
+        // Persist generated scenery
+        if (roomToCommit.scenery && roomToCommit.scenery.length > 0) {
+          const stmtInsertScenery = db.prepare(
+            'INSERT INTO scenery (room_id, name, description, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?)',
+          );
+          for (const s of roomToCommit.scenery) {
+            stmtInsertScenery.run(newRoomId, s.name, s.inspection_description, s.inspection_description, s.room_blurb);
+          }
+        }
+
         // Update player position
         stmtUpdatePlayerRoom.run(newRoomId);
 
@@ -337,10 +365,10 @@ function seedIfEmpty(db: Database.Database, worldFile: WorldFile): void {
   // Insert any frontmatter-authored scenery
   if (sr.scenery) {
     const insertScenery = db.prepare(
-      'INSERT INTO scenery (room_id, name, description) VALUES (?, ?, ?)',
+      'INSERT INTO scenery (room_id, name, description, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?)',
     );
     for (const s of sr.scenery) {
-      insertScenery.run(roomId, s.name, s.inspection_description);
+      insertScenery.run(roomId, s.name, s.inspection_description, s.inspection_description, s.room_blurb);
     }
   }
 

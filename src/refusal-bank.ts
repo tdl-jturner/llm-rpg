@@ -1,6 +1,9 @@
 const DEFAULTS: Record<string, string> = {
   no_exit: "You can't go that way.",
   intent_unparseable: "I don't understand that.",
+  nothing_here_named: "You don't see anything like that here.",
+  cannot_take_scenery: "That's not something you can take.",
+  ambiguous_target: "Which one do you mean?",
 };
 
 export function getRefusal(key: string): string {
