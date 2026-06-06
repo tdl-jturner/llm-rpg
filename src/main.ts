@@ -1,9 +1,13 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import { handleSubmitInput } from './main-handler';
+import { openWorldDB } from './world-db';
+import type { WorldDB } from './world-db';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
+
+let worldDB: WorldDB | undefined;
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -24,8 +28,10 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  worldDB = openWorldDB(app.getPath('userData'));
+
   ipcMain.handle('submit-input', (_event, text: string) => {
-    return handleSubmitInput(text);
+    return handleSubmitInput(text, worldDB);
   });
 
   createWindow();
@@ -36,5 +42,6 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  worldDB?.db.close();
   if (process.platform !== 'darwin') app.quit();
 });

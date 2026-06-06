@@ -25,10 +25,14 @@
     "@electron-forge/plugin-fuses": "^7.11.2",
     "@electron-forge/plugin-vite": "^7.11.2",
     "@electron/fuses": "^1.8.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.17.0",
     "electron": "^42.3.3",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
     "vitest": "^3.2.6"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0"
   }
 }
