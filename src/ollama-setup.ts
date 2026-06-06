@@ -1,16 +1,11 @@
 // ---------------------------------------------------------------------------
 // OllamaSetup
 //
-// Orchestrates the startup check sequence:
+// Startup check sequence:
 //   1. Reachability — can we reach localhost:11434?
 //   2. Model availability — are both configured model tags pulled?
-//   3. Smoke test — does each model return valid JSON from a trivial prompt?
-//
-// The smoke test runs through JsonRetryRunner with real LLM calls and logs
-// each exchange as an `llm.call` event.
 // ---------------------------------------------------------------------------
 
-import { runWithRetry } from './json-retry-runner';
 import type { AppConfig } from './app-config';
 
 // ---------------------------------------------------------------------------
@@ -20,22 +15,8 @@ import type { AppConfig } from './app-config';
 export interface OllamaSetupDeps {
   isReachable: () => Promise<boolean>;
   listModels: () => Promise<string[]>;
-  callModel: (tag: string, prompt: string, jsonMode: boolean) => Promise<string>;
-}
-
-// ---------------------------------------------------------------------------
-// Logger interface — minimal subset used here
-// ---------------------------------------------------------------------------
-
-export interface SetupLogger {
-  logLlmCall(event: LlmCallEvent): void;
-}
-
-export interface LlmCallEvent {
-  model: string;
-  prompt: string;
-  response: string;
-  ok: boolean;
+  /** Optional: send a prompt to a model and return the raw text response. */
+  callModel?: (tag: string, prompt: string, jsonMode: boolean) => Promise<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,21 +25,7 @@ export interface LlmCallEvent {
 
 export type OllamaSetupResult =
   | { ok: true }
-  | { ok: false; error: string; phase: 'reachability' | 'models' | 'smoketest' };
-
-// ---------------------------------------------------------------------------
-// Smoke test schema
-// ---------------------------------------------------------------------------
-
-const SMOKE_SCHEMA = {
-  type: 'object',
-  required: ['ok'] as readonly string[],
-  properties: {
-    ok: { type: 'boolean' },
-  },
-} as const;
-
-const SMOKE_PROMPT = 'Respond with exactly the JSON object {"ok": true}.';
+  | { ok: false; error: string; phase: 'reachability' | 'models' | 'smoke_test' };
 
 // ---------------------------------------------------------------------------
 // Main orchestrator
@@ -67,7 +34,6 @@ const SMOKE_PROMPT = 'Respond with exactly the JSON object {"ok": true}.';
 export async function runOllamaSetup(
   config: AppConfig,
   deps: OllamaSetupDeps,
-  logger?: SetupLogger,
 ): Promise<OllamaSetupResult> {
   // ── 1. Reachability ───────────────────────────────────────────────────────
   const reachable = await deps.isReachable();
@@ -102,35 +68,41 @@ export async function runOllamaSetup(
     };
   }
 
-  // ── 3. Smoke test — both models ───────────────────────────────────────────
-  for (const tag of requiredModels) {
-    const llmFn = async (prompt: string): Promise<string> => {
-      const response = await deps.callModel(tag, prompt, true);
-      logger?.logLlmCall({ model: tag, prompt, response, ok: true });
-      return response;
-    };
+  // ── 3. Smoke test ─────────────────────────────────────────────────────────
+  if (deps.callModel) {
+    const SMOKE_PROMPT = 'Respond with exactly the JSON object {"ok": true}.';
+    const MAX_ATTEMPTS = 3;
 
-    const result = await runWithRetry<{ ok: boolean }>({
-      llmFn,
-      schema: SMOKE_SCHEMA,
-      prompt: SMOKE_PROMPT,
-      maxAttempts: 3,
-    });
+    for (const tag of requiredModels) {
+      let passed = false;
+      let lastError = '';
 
-    if (!result.ok) {
-      return {
-        ok: false,
-        error: `Smoke test failed for model "${tag}": ${result.error}`,
-        phase: 'smoketest',
-      };
-    }
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        try {
+          const raw = await deps.callModel(tag, SMOKE_PROMPT, true);
+          const parsed = JSON.parse(raw) as unknown;
+          if (
+            typeof parsed === 'object' &&
+            parsed !== null &&
+            !Array.isArray(parsed) &&
+            (parsed as Record<string, unknown>)['ok'] === true
+          ) {
+            passed = true;
+            break;
+          }
+          lastError = `Model "${tag}" returned unexpected shape: ${raw}`;
+        } catch (e) {
+          lastError = e instanceof Error ? e.message : String(e);
+        }
+      }
 
-    if (!result.value.ok) {
-      return {
-        ok: false,
-        error: `Smoke test for model "${tag}" returned {"ok": false} instead of {"ok": true}.`,
-        phase: 'smoketest',
-      };
+      if (!passed) {
+        return {
+          ok: false,
+          error: `Smoke test failed for model "${tag}": ${lastError}`,
+          phase: 'smoke_test',
+        };
+      }
     }
   }
 

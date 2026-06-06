@@ -158,6 +158,15 @@ async function runSetupCheck(): Promise<void> {
     return;
   }
 
+  if (result.phase === 'smoke_test') {
+    ollamaStatusMsg.textContent =
+      `${result.error}\n\nThe model is installed but did not respond correctly. Try restarting Ollama and clicking Retry.`;
+    setSetupButtons(
+      makeButton('Retry', 'primary', () => runSetupCheck()),
+    );
+    return;
+  }
+
   ollamaStatusMsg.textContent = result.error;
   setSetupButtons(
     makeButton('Retry', 'primary', () => runSetupCheck()),

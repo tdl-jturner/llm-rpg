@@ -343,6 +343,11 @@ function registerIpcHandlers(): void {
     return runOllamaSetup(appConfig, {
       isReachable: isOllamaReachable,
       listModels: listPulledModels,
+      callModel: async (tag, prompt, jsonMode) => {
+        const response = await callModel(tag, prompt, jsonMode);
+        activeLogger?.logLlmCall({ model: tag, prompt, response, ok: true });
+        return response;
+      },
     });
   });
 

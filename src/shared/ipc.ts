@@ -76,7 +76,7 @@ export interface AppConfig {
  */
 export type OllamaCheckResult =
   | { ok: true }
-  | { ok: false; error: string; phase: 'reachability' | 'models' };
+  | { ok: false; error: string; phase: 'reachability' | 'models' | 'smoke_test' };
 
 // ---------------------------------------------------------------------------
 // Electron API exposed via contextBridge
