@@ -27,6 +27,7 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 let worldDB: WorldDB | undefined;
 let activeLogger: EventLogger | undefined;
 let activeRefusals: Record<string, string> | undefined;
+let activeWorldBody: string | undefined;
 let appConfig: AppConfig = { heavyModel: 'qwen3:8b', lightModel: 'gemma3:1b' };
 
 // Real LLM function — uses the heavy model via Ollama, logs each call.
@@ -142,7 +143,7 @@ function openLogger(folderName: string, worldMdPath?: string): EventLogger {
 function registerIpcHandlers(): void {
   // ── Game input ────────────────────────────────────────────────────────────
   ipcMain.handle('submit-input', (_event, text: string) => {
-    return handleSubmitInput(text, worldDB, getRealLLM(), activeLogger, undefined, activeRefusals);
+    return handleSubmitInput(text, worldDB, getRealLLM(), activeLogger, activeWorldBody, activeRefusals);
   });
 
   // ── World picker: list ────────────────────────────────────────────────────
@@ -203,6 +204,7 @@ function registerIpcHandlers(): void {
       worldDB?.db.close();
       worldDB = openWorldDB(worldDir, world);
       activeRefusals = world.refusals;
+      activeWorldBody = world.body;
       const logger = openLogger(folderName, path.join(worldDir, 'WORLD.md'));
       // Warn about unknown refusal keys
       if (world.refusals) {
@@ -244,6 +246,7 @@ function registerIpcHandlers(): void {
       worldDB?.db.close();
       worldDB = openWorldDB(worldDir, parsed.world);
       activeRefusals = parsed.world.refusals;
+      activeWorldBody = parsed.world.body;
       const logger = openLogger(folderName, mdPath);
       // Warn about unknown refusal keys
       if (parsed.world.refusals) {
@@ -274,6 +277,7 @@ function registerIpcHandlers(): void {
     worldDB = undefined;
     activeLogger?.close();
     activeLogger = undefined;
+    activeWorldBody = undefined;
 
     // Delete the SQLite database; preserve WORLD.md and logs/
     try {
@@ -302,6 +306,7 @@ function registerIpcHandlers(): void {
 
     try {
       worldDB = openWorldDB(worldDir, parsed.world);
+      activeWorldBody = parsed.world.body;
     } catch (e) {
       return { ok: false, error: `Could not re-create world database: ${e instanceof Error ? e.message : e}` };
     }
@@ -317,6 +322,7 @@ function registerIpcHandlers(): void {
     worldDB = undefined;
     activeLogger?.close();
     activeLogger = undefined;
+    activeWorldBody = undefined;
 
     try {
       fs.rmSync(worldDir, { recursive: true, force: true });
