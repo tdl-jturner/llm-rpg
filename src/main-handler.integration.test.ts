@@ -16,6 +16,7 @@ import { openWorldDB } from './world-db';
 import type { WorldDB } from './world-db';
 import type { WorldFile } from './world-file-loader';
 import { handleSubmitInput, resetDisambiguationState } from './main-handler';
+import { EventLogger } from './event-logger';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -565,6 +566,7 @@ describe('Integration: full turn loop', () => {
   // ── Respawn refills engaged monsters ────────────────────────────────────────
 
   it('Respawn refills HP of all engaged monsters', async () => {
+
     const worldFile = makeWorldFile({
       monsters: [
         {
@@ -591,5 +593,327 @@ describe('Integration: full turn loop', () => {
     expect(monsters).toHaveLength(1);
     expect(monsters[0].hp).toBe(monsters[0].max_hp);
     expect(monsters[0].engaged).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helper: read a JSONL log file into a list of event objects
+// ---------------------------------------------------------------------------
+function readStateMutateEvents(logPath: string): Array<Record<string, unknown>> {
+  const raw = fs.readFileSync(logPath, 'utf-8').trim();
+  const lines = raw.split('\n').filter(Boolean);
+  const events = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+  return events.filter((e) => e['event'] === 'state.mutate');
+}
+
+// ---------------------------------------------------------------------------
+// state.mutate logging integration tests
+// ---------------------------------------------------------------------------
+
+describe('state.mutate logging', () => {
+  let loggerTmpDir: string;
+  let logger: EventLogger;
+
+  beforeEach(() => {
+    loggerTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-rpg-mutate-log-'));
+    logger = new EventLogger(loggerTmpDir, 'test-world');
+  });
+
+  afterEach(() => {
+    try { logger.close(); } catch { /* already closed */ }
+    fs.rmSync(loggerTmpDir, { recursive: true, force: true });
+  });
+
+  // ── Move/generation: room insertion and player room update ─────────────────
+
+  it('Moving into unmapped exit emits state.mutate for player room change', async () => {
+    const db = openFreshDB();
+    const llmFn = vi.fn().mockResolvedValue(cannedRoomJson('Northern Hall', ['south']));
+
+    await handleSubmitInput('go north', db, llmFn, logger, 'world body');
+    logger.close();
+
+    const events = readStateMutateEvents(logger.logFilePath);
+    const roomChangeEvent = events.find(
+      (e) => e['entity'] === 'player' && e['reason'] === 'move',
+    );
+    expect(roomChangeEvent).toBeDefined();
+    const after = roomChangeEvent!['after'] as Record<string, unknown>;
+    const before = roomChangeEvent!['before'] as Record<string, unknown>;
+    expect(before['current_room_id']).not.toBe(after['current_room_id']);
+  });
+
+  // ── Parting hits: player HP change ─────────────────────────────────────────
+
+  it('Parting hits emit state.mutate for player HP', async () => {
+    const worldFile = makeWorldFile({
+      monsters: [{
+        name: 'Cave Rat',
+        inspection_description: 'A scrawny rat.',
+        room_blurb: 'A cave rat lurks here.',
+        hp: 9999,
+        max_hp: 9999,
+        damage_min: 5,
+        damage_max: 5,
+      }],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn().mockResolvedValue(cannedRoomJson('North Chamber', ['south']));
+
+    // Engage the monster first (no logger — keep log clean)
+    await handleSubmitInput('attack cave rat', db, llmFn, undefined, 'world body');
+    const hpAfterAttack = db.getPlayerState().hp;
+
+    // Move with logger — parting hit should fire and be logged
+    await handleSubmitInput('go north', db, llmFn, logger, 'world body');
+    logger.close();
+
+    const events = readStateMutateEvents(logger.logFilePath);
+    const partingEvent = events.find(
+      (e) => e['entity'] === 'player' && e['reason'] === 'parting_hit',
+    );
+    expect(partingEvent).toBeDefined();
+    expect((partingEvent!['before'] as Record<string, unknown>)?.['hp']).toBe(hpAfterAttack);
+    expect((partingEvent!['after'] as Record<string, unknown>)?.['hp']).toBeLessThan(hpAfterAttack);
+  });
+
+  // ── Respawn: player HP, room, and monster HP resets ─────────────────────────
+
+  it('Respawn emits state.mutate for player HP and room, and for each engaged monster HP', async () => {
+    const worldFile = makeWorldFile({
+      monsters: [{
+        name: 'Death Knight',
+        inspection_description: 'A terrifying warrior.',
+        room_blurb: 'A death knight stands here.',
+        hp: 9999,
+        max_hp: 9999,
+        damage_min: 9999,
+        damage_max: 9999,
+      }],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    // Attack death knight with logger — player dies, respawn fires
+    await handleSubmitInput('attack death knight', db, llmFn, logger, 'world body');
+    logger.close();
+
+    const events = readStateMutateEvents(logger.logFilePath);
+
+    // Player HP reset
+    const playerHpReset = events.find(
+      (e) => e['entity'] === 'player' && e['reason'] === 'respawn',
+    );
+    expect(playerHpReset).toBeDefined();
+    expect((playerHpReset!['after'] as Record<string, unknown>)?.['hp']).toBe(20); // max_hp
+
+    // Player room reset
+    const playerRoomReset = events.find(
+      (e) => e['entity'] === 'player' && e['reason'] === 'respawn_room',
+    );
+    expect(playerRoomReset).toBeDefined();
+  });
+
+  // ── ATTACK: HP changes and engaged flag ─────────────────────────────────────
+
+  it('ATTACK emits state.mutate events for monster HP and player HP', async () => {
+    const worldFile = makeWorldFile({
+      monsters: [{
+        name: 'Cave Rat',
+        inspection_description: 'A scrawny rat.',
+        room_blurb: 'A cave rat lurks here.',
+        hp: 50,
+        max_hp: 50,
+        damage_min: 1,
+        damage_max: 1,
+      }],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    await handleSubmitInput('attack cave rat', db, llmFn, logger, 'world body');
+    logger.close();
+
+    const events = readStateMutateEvents(logger.logFilePath);
+
+    // Monster HP change
+    const monsterHpEvent = events.find(
+      (e) => e['entity'] === 'monster' && e['reason'] === 'attack',
+    );
+    expect(monsterHpEvent).toBeDefined();
+    expect((monsterHpEvent!['before'] as Record<string, unknown>)?.['hp']).toBe(50);
+    expect((monsterHpEvent!['after'] as Record<string, unknown>)?.['hp']).toBeLessThan(50);
+
+    // Player HP change (rat hits for 1)
+    const playerHpEvent = events.find(
+      (e) => e['entity'] === 'player' && e['reason'] === 'attack',
+    );
+    expect(playerHpEvent).toBeDefined();
+    expect((playerHpEvent!['before'] as Record<string, unknown>)?.['hp']).toBe(20);
+  });
+
+  it('ATTACK monster death emits state.mutate for monster location and drop item', async () => {
+    const worldFile = makeWorldFile({
+      items: [{
+        name: 'Giant Hammer',
+        inspection_description: 'A massive hammer.',
+        room_blurb: 'A giant hammer rests here.',
+        damage_min: 100,
+        damage_max: 100,
+        type: 'weapon',
+      }],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn().mockResolvedValue(cannedRoomWithMonsterJson('Goblin Den'));
+
+    await handleSubmitInput('take giant hammer', db, llmFn, undefined, 'world body');
+    await handleSubmitInput('go north', db, llmFn, undefined, 'world body');
+    // Now attack goblin with logger
+    await handleSubmitInput('attack goblin', db, llmFn, logger, 'world body');
+    logger.close();
+
+    const events = readStateMutateEvents(logger.logFilePath);
+
+    // Monster location change to dead:<id>
+    const monsterDeadEvent = events.find(
+      (e) => e['entity'] === 'monster' && e['reason'] === 'monster_death',
+    );
+    expect(monsterDeadEvent).toBeDefined();
+    expect((monsterDeadEvent!['after'] as Record<string, unknown>)?.['location']).toMatch(/^dead:/);
+
+    // Drop item moved from monster:<id> to room:<id>
+    const dropEvent = events.find(
+      (e) => e['entity'] === 'item' && e['reason'] === 'monster_death_drop',
+    );
+    expect(dropEvent).toBeDefined();
+    expect((dropEvent!['before'] as Record<string, unknown>)?.['location']).toMatch(/^monster:/);
+    expect((dropEvent!['after'] as Record<string, unknown>)?.['location']).toMatch(/^room:/);
+  });
+
+  // ── DROP: item location and equipped weapon changes ─────────────────────────
+
+  it('DROP emits state.mutate events for item location change', async () => {
+    const worldFile = makeWorldFile({
+      items: [{
+        name: 'Iron Sword',
+        inspection_description: 'A sturdy sword.',
+        room_blurb: 'An iron sword rests here.',
+        damage_min: 3,
+        damage_max: 6,
+        type: 'weapon',
+      }],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    // Take first (without logger to keep log clean), then drop with logger
+    await handleSubmitInput('take iron sword', db, llmFn, undefined, 'world body');
+    await handleSubmitInput('drop iron sword', db, llmFn, logger, 'world body');
+    logger.close();
+
+    const events = readStateMutateEvents(logger.logFilePath);
+    const dropEvent = events.find(
+      (e) => e['entity'] === 'item' && e['reason'] === 'drop',
+    );
+    expect(dropEvent).toBeDefined();
+    expect((dropEvent!['before'] as Record<string, unknown>)?.['location']).toBe('player_inventory');
+    expect((dropEvent!['after'] as Record<string, unknown>)?.['location']).toMatch(/^room:/);
+  });
+
+  it('DROP equipped weapon emits state.mutate for re-selection of equipped weapon', async () => {
+    const worldFile = makeWorldFile({
+      items: [
+        {
+          name: 'Iron Sword',
+          inspection_description: 'A sturdy sword.',
+          room_blurb: 'An iron sword rests here.',
+          damage_min: 3,
+          damage_max: 6,
+          type: 'weapon',
+        },
+        {
+          name: 'Rusty Dagger',
+          inspection_description: 'A corroded dagger.',
+          room_blurb: 'A rusty dagger lies here.',
+          damage_min: 1,
+          damage_max: 3,
+          type: 'weapon',
+        },
+      ],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    await handleSubmitInput('take iron sword', db, llmFn, undefined, 'world body');
+    await handleSubmitInput('take rusty dagger', db, llmFn, undefined, 'world body');
+    // Drop equipped sword — should re-equip dagger
+    await handleSubmitInput('drop iron sword', db, llmFn, logger, 'world body');
+    logger.close();
+
+    const events = readStateMutateEvents(logger.logFilePath);
+    const reequipEvent = events.find(
+      (e) => e['entity'] === 'player' && e['reason'] === 'drop_re_equip',
+    );
+    expect(reequipEvent).toBeDefined();
+    // Before: iron sword was equipped (some id). After: rusty dagger equipped (different id)
+    const before = reequipEvent!['before'] as Record<string, unknown>;
+    const after = reequipEvent!['after'] as Record<string, unknown>;
+    expect(before['equipped_weapon_id']).not.toBe(after['equipped_weapon_id']);
+  });
+
+  // ── TAKE: item location change ──────────────────────────────────────────────
+
+  it('TAKE emits a state.mutate event with auto-equip weapon change when applicable', async () => {
+    const worldFile = makeWorldFile({
+      items: [{
+        name: 'Iron Sword',
+        inspection_description: 'A sturdy sword.',
+        room_blurb: 'An iron sword rests here.',
+        damage_min: 3,
+        damage_max: 6,
+        type: 'weapon',
+      }],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    await handleSubmitInput('take iron sword', db, llmFn, logger, 'world body');
+    logger.close();
+
+    const events = readStateMutateEvents(logger.logFilePath);
+    const equipEvent = events.find(
+      (e) => e['entity'] === 'player' && e['reason'] === 'take_auto_equip',
+    );
+    expect(equipEvent).toBeDefined();
+    expect((equipEvent!['before'] as Record<string, unknown>)?.['equipped_weapon_id']).toBeNull();
+    expect((equipEvent!['after'] as Record<string, unknown>)?.['equipped_weapon_id']).toBeTypeOf('number');
+  });
+
+  it('TAKE emits state.mutate events for item location and disturbed changes', async () => {
+    const worldFile = makeWorldFile({
+      items: [{
+        name: 'Iron Sword',
+        inspection_description: 'A sturdy sword.',
+        room_blurb: 'An iron sword rests here.',
+        damage_min: 3,
+        damage_max: 6,
+        type: 'weapon',
+      }],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    await handleSubmitInput('take iron sword', db, llmFn, logger, 'world body');
+    logger.close();
+
+    const events = readStateMutateEvents(logger.logFilePath);
+
+    // Must have at least an item location change event
+    const locationEvent = events.find(
+      (e) => e['entity'] === 'item' && (e['after'] as Record<string, unknown>)?.['location'] === 'player_inventory',
+    );
+    expect(locationEvent).toBeDefined();
+    expect((locationEvent!['before'] as Record<string, unknown>)?.['location']).toMatch(/^room:/);
+    expect(locationEvent!['reason']).toBe('take');
   });
 });

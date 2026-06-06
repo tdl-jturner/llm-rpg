@@ -187,7 +187,7 @@ export async function handleSubmitInput(
           if (alreadyHave) {
             narrative.push(`You already have the ${entity.name}.`);
           } else {
-            const takenItem = worldDB.takeItem(entity.id);
+            const takenItem = worldDB.takeItem(entity.id, logger);
             let msg = `You take the ${takenItem.name}.`;
             // Check if auto-equip happened
             const equipped = worldDB.getEquippedWeapon();
@@ -215,7 +215,7 @@ export async function handleSubmitInput(
       if (result.type === 'no_match') {
         narrative.push(emitRefusal('cant_drop_what_you_dont_have', logger, refusals));
       } else if (result.type === 'unique') {
-        const droppedItem = worldDB.dropItem(result.entity.id);
+        const droppedItem = worldDB.dropItem(result.entity.id, logger);
         narrative.push(`You drop the ${droppedItem.name}.`);
       } else {
         // Ambiguous drop — unlikely but handle gracefully
@@ -249,13 +249,13 @@ export async function handleSubmitInput(
       }
 
       // Apply parting hits from engaged monsters before moving
-      const partingHits = worldDB.applyPartingHits();
+      const partingHits = worldDB.applyPartingHits(logger);
       if (partingHits.monster_damage_dealt > 0) {
         narrative.push(
           `As you leave, something strikes you for ${partingHits.monster_damage_dealt} damage.`,
         );
         if (partingHits.player_died) {
-          const startRoom = worldDB.respawnPlayer();
+          const startRoom = worldDB.respawnPlayer(logger);
           narrative.push('Everything goes black. You wake at the threshold.');
           narrative.push(assembleBlurb(startRoom, {}));
           break;
@@ -337,7 +337,7 @@ export async function handleSubmitInput(
         break;
       }
 
-      const attackResult = worldDB.attackMonster(targetMonster.id);
+      const attackResult = worldDB.attackMonster(targetMonster.id, logger);
 
       // Render player's hit
       narrative.push(
@@ -352,7 +352,7 @@ export async function handleSubmitInput(
         );
 
         if (attackResult.player_died) {
-          const startRoom = worldDB.respawnPlayer();
+          const startRoom = worldDB.respawnPlayer(logger);
           narrative.push('Everything goes black. You wake at the threshold.');
           narrative.push(assembleBlurb(startRoom, {}));
         }
@@ -424,7 +424,7 @@ async function resolveEntityIntentAsync(
     const monster = worldDB.getMonster(entity.id);
     if (!monster) return [_getRefusal('nothing_to_attack')];
 
-    const attackResult = worldDB.attackMonster(monster.id);
+    const attackResult = worldDB.attackMonster(monster.id, logger);
     const lines: string[] = [
       `You hit the ${monster.name} for ${attackResult.player_damage_dealt} damage.`,
     ];
@@ -435,7 +435,7 @@ async function resolveEntityIntentAsync(
         `The ${monster.name} strikes back for ${attackResult.monster_damage_dealt} damage.`,
       );
       if (attackResult.player_died) {
-        const startRoom = worldDB.respawnPlayer();
+        const startRoom = worldDB.respawnPlayer(logger);
         lines.push('Everything goes black. You wake at the threshold.');
         lines.push(assembleBlurb(startRoom, {}));
       }
@@ -459,7 +459,7 @@ async function resolveEntityIntentAsync(
     if (alreadyHave) {
       return [`You already have the ${entity.name}.`];
     }
-    const takenItem = worldDB.takeItem(entity.id);
+    const takenItem = worldDB.takeItem(entity.id, logger);
     let msg = `You take the ${takenItem.name}.`;
     const equipped = worldDB.getEquippedWeapon();
     if (equipped && equipped.id === takenItem.id) {

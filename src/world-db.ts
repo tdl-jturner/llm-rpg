@@ -124,14 +124,14 @@ export interface WorldDB {
    * Sets disturbed = true and updates equipped_weapon_id if auto-equip applies.
    * Returns the item row that was taken.
    */
-  takeItem(itemId: number): ItemRow;
+  takeItem(itemId: number, logger?: EventLogger): ItemRow;
 
   /**
    * Move an item from the player's inventory to the current room.
    * If the item was equipped, re-runs auto-equip selection and updates equipped_weapon_id.
    * Returns the item row that was dropped.
    */
-  dropItem(itemId: number): ItemRow;
+  dropItem(itemId: number, logger?: EventLogger): ItemRow;
 
   /** All monsters alive in the given room (location = "room:<roomId>"). */
   getMonstersInRoom(roomId: number): MonsterRow[];
@@ -145,20 +145,20 @@ export interface WorldDB {
    * If monster dies: sets location to "dead:<id>", moves drop to "room:<roomId>".
    * If player dies: triggers respawn.
    */
-  attackMonster(monsterId: number): AttackResult;
+  attackMonster(monsterId: number, logger?: EventLogger): AttackResult;
 
   /**
    * Execute a parting hit from all engaged monsters in the current room.
    * Called when the player moves out of a room with engaged monsters.
    * Returns the combined result (worst case for player).
    */
-  applyPartingHits(): PartingHitResult;
+  applyPartingHits(logger?: EventLogger): PartingHitResult;
 
   /**
    * Respawn the player: reset HP to max_hp, move to starting room (0,0,0),
    * refill HP of all monsters that were ever engaged.
    */
-  respawnPlayer(): Room;
+  respawnPlayer(logger?: EventLogger): Room;
 }
 
 /**
@@ -274,11 +274,20 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       return item ?? null;
     },
 
-    takeItem(itemId: number): ItemRow {
+    takeItem(itemId: number, logger?: EventLogger): ItemRow {
       const item = stmtGetItem.get(itemId) as ItemRow;
 
       // Move item to inventory and mark as disturbed
       stmtUpdateItemLocation.run('player_inventory', 1, itemId);
+
+      // Log item location change
+      logger?.logStateMutate({
+        entity: 'item',
+        id: itemId,
+        before: { location: item.location, disturbed: item.disturbed },
+        after: { location: 'player_inventory', disturbed: 1 },
+        reason: 'take',
+      });
 
       // Auto-equip check
       const player = stmtGetPlayerState.get() as PlayerState;
@@ -289,18 +298,36 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
 
       if (shouldAutoEquip(currentWeapon, item)) {
         stmtUpdateEquippedWeapon.run(itemId);
+        // Log equipped weapon change
+        logger?.logStateMutate({
+          entity: 'player',
+          id: 1,
+          before: { equipped_weapon_id: equippedId ?? null },
+          after: { equipped_weapon_id: itemId },
+          reason: 'take_auto_equip',
+        });
       }
 
       return { ...item, location: 'player_inventory', disturbed: 1 };
     },
 
-    dropItem(itemId: number): ItemRow {
+    dropItem(itemId: number, logger?: EventLogger): ItemRow {
       const item = stmtGetItem.get(itemId) as ItemRow;
       const player = stmtGetPlayerState.get() as PlayerState;
       const currentRoomId = player.current_room_id;
+      const newLocation = `room:${currentRoomId}`;
 
       // Move item to current room (disturbed stays true since it was previously taken)
-      stmtUpdateItemLocation.run(`room:${currentRoomId}`, 1, itemId);
+      stmtUpdateItemLocation.run(newLocation, 1, itemId);
+
+      // Log item location change
+      logger?.logStateMutate({
+        entity: 'item',
+        id: itemId,
+        before: { location: item.location },
+        after: { location: newLocation },
+        reason: 'drop',
+      });
 
       // If this was the equipped weapon, re-run auto-equip selection
       if (player.equipped_weapon_id === itemId) {
@@ -314,10 +341,20 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           damage_max: i.damage_max,
         }));
         const best = selectBestWeapon(candidates);
-        stmtUpdateEquippedWeapon.run(best ? best.id : null);
+        const newEquippedId = best ? best.id : null;
+        stmtUpdateEquippedWeapon.run(newEquippedId);
+
+        // Log equipped weapon re-selection
+        logger?.logStateMutate({
+          entity: 'player',
+          id: 1,
+          before: { equipped_weapon_id: player.equipped_weapon_id },
+          after: { equipped_weapon_id: newEquippedId },
+          reason: 'drop_re_equip',
+        });
       }
 
-      return { ...item, location: `room:${currentRoomId}`, disturbed: 1 };
+      return { ...item, location: newLocation, disturbed: 1 };
     },
 
     getMonstersInRoom(roomId: number): MonsterRow[] {
@@ -328,7 +365,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       return stmtGetMonster.get(monsterId) as MonsterRow | undefined;
     },
 
-    attackMonster(monsterId: number): AttackResult {
+    attackMonster(monsterId: number, logger?: EventLogger): AttackResult {
       const monster = stmtGetMonster.get(monsterId) as MonsterRow;
       const player = stmtGetPlayerState.get() as PlayerState;
 
@@ -377,6 +414,56 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         }
       })();
 
+      // ── Log state mutations after transaction ───────────────────────────────
+      // Monster engaged flag
+      logger?.logStateMutate({
+        entity: 'monster',
+        id: monsterId,
+        before: { engaged: monster.engaged },
+        after: { engaged: 1 },
+        reason: 'attack_engage',
+      });
+
+      if (combatResult.monster_dead) {
+        // Monster HP → 0 and location → dead
+        logger?.logStateMutate({
+          entity: 'monster',
+          id: monsterId,
+          before: { hp: monster.hp, location: monster.location },
+          after: { hp: 0, location: `dead:${monsterId}` },
+          reason: 'monster_death',
+        });
+
+        // Drop item location
+        const drop = stmtGetDropForMonster.get(`room:${player.current_room_id}`) as ItemRow | undefined;
+        if (drop) {
+          logger?.logStateMutate({
+            entity: 'item',
+            id: drop.id,
+            before: { location: `monster:${monsterId}` },
+            after: { location: `room:${player.current_room_id}` },
+            reason: 'monster_death_drop',
+          });
+        }
+      } else {
+        logger?.logStateMutate({
+          entity: 'monster',
+          id: monsterId,
+          before: { hp: monster.hp },
+          after: { hp: newMonsterHp },
+          reason: 'attack',
+        });
+      }
+
+      // Player HP change
+      logger?.logStateMutate({
+        entity: 'player',
+        id: 1,
+        before: { hp: player.hp },
+        after: { hp: newPlayerHp },
+        reason: 'attack',
+      });
+
       return {
         ...combatResult,
         newPlayerHp,
@@ -384,7 +471,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       };
     },
 
-    applyPartingHits(): PartingHitResult {
+    applyPartingHits(logger?: EventLogger): PartingHitResult {
       const player = stmtGetPlayerState.get() as PlayerState;
       const engagedMonsters = stmtGetMonstersInRoom.all(`room:${player.current_room_id}`) as MonsterRow[];
       const activeEngaged = engagedMonsters.filter((m) => m.engaged === 1);
@@ -403,6 +490,15 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       const newPlayerHp = Math.max(0, player.hp - totalDamage);
       stmtUpdatePlayerHp.run(newPlayerHp);
 
+      // Log player HP change from parting hits
+      logger?.logStateMutate({
+        entity: 'player',
+        id: 1,
+        before: { hp: player.hp },
+        after: { hp: newPlayerHp },
+        reason: 'parting_hit',
+      });
+
       return {
         monster_damage_dealt: totalDamage,
         player_died: newPlayerHp <= 0,
@@ -410,8 +506,10 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       };
     },
 
-    respawnPlayer(): Room {
+    respawnPlayer(logger?: EventLogger): Room {
       const startingRoom = stmtGetStartingRoom.get() as Room;
+      const playerBefore = stmtGetPlayerState.get() as PlayerState;
+      const engagedMonstersBefore = stmtGetEngagedMonsters.all() as { id: number }[];
 
       db.transaction(() => {
         // Reset player HP and position
@@ -423,6 +521,38 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         // Clear engaged flags
         stmtClearAllEngaged.run();
       })();
+
+      // Log player HP reset
+      logger?.logStateMutate({
+        entity: 'player',
+        id: 1,
+        before: { hp: playerBefore.hp },
+        after: { hp: playerBefore.max_hp },
+        reason: 'respawn',
+      });
+
+      // Log player room reset
+      logger?.logStateMutate({
+        entity: 'player',
+        id: 1,
+        before: { current_room_id: playerBefore.current_room_id },
+        after: { current_room_id: startingRoom.id },
+        reason: 'respawn_room',
+      });
+
+      // Log HP refill for each engaged monster
+      for (const { id: monsterId } of engagedMonstersBefore) {
+        const monster = stmtGetMonster.get(monsterId) as MonsterRow | undefined;
+        if (monster) {
+          logger?.logStateMutate({
+            entity: 'monster',
+            id: monsterId,
+            before: { hp: monster.hp, engaged: 1 },
+            after: { hp: monster.max_hp, engaged: 0 },
+            reason: 'respawn_monster_refill',
+          });
+        }
+      }
 
       return startingRoom;
     },
@@ -445,6 +575,13 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         // Exit already exists → just move the player
         const toRoom = stmtGetRoom.get(exitRow.to_room_id) as Room;
         stmtUpdatePlayerRoom.run(toRoom.id);
+        logger?.logStateMutate({
+          entity: 'player',
+          id: 1,
+          before: { current_room_id: fromRoomId },
+          after: { current_room_id: toRoom.id },
+          reason: 'move',
+        });
         return { ok: true, room: toRoom, generated: false };
       }
 
@@ -508,6 +645,14 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         })();
 
         stmtUpdatePlayerRoom.run(existingRoom.id);
+
+        logger?.logStateMutate({
+          entity: 'player',
+          id: 1,
+          before: { current_room_id: fromRoomId },
+          after: { current_room_id: existingRoom.id },
+          reason: 'move',
+        });
 
         // Log the link event
         logger?.logGenRoom({
@@ -682,11 +827,19 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
 
       const newRoomId = commitTx() as number;
 
-      // ── 7. Log the gen.room event ─────────────────────────────────────────
+      // ── 7. Log the gen.room event and player move ─────────────────────────
       logger?.logGenRoom({
         room_id: newRoomId,
         coords: targetCoords,
         source: generationFailed ? 'stub' : 'llm',
+      });
+
+      logger?.logStateMutate({
+        entity: 'player',
+        id: 1,
+        before: { current_room_id: fromRoomId },
+        after: { current_room_id: newRoomId },
+        reason: 'move',
       });
 
       const newRoom = stmtGetRoom.get(newRoomId) as Room;
