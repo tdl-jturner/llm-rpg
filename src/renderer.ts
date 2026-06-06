@@ -26,6 +26,7 @@ const scrollback = document.getElementById('scrollback') as HTMLDivElement;
 const input = document.getElementById('input') as HTMLInputElement;
 const form = document.getElementById('input-form') as HTMLFormElement;
 const backToPickerBtn = document.getElementById('back-to-picker') as HTMLButtonElement;
+const spinner = document.getElementById('spinner') as HTMLSpanElement;
 
 // ---------------------------------------------------------------------------
 // State
@@ -178,6 +179,7 @@ form.addEventListener('submit', async (e) => {
   historyIndex = -1;
   input.value = '';
   input.disabled = true;
+  spinner.classList.add('active');
 
   const response = await window.electronAPI.submitInput(text);
   for (const line of response.narrative) {
@@ -185,6 +187,7 @@ form.addEventListener('submit', async (e) => {
     appendLine(line, isPlayerEcho ? 'player-input' : 'narrative');
   }
 
+  spinner.classList.remove('active');
   input.disabled = false;
   input.focus();
 });

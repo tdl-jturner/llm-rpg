@@ -9,7 +9,7 @@ describe('MigrationRunner', () => {
     db?.close();
   });
 
-  it('creates all v1 tables in a fresh in-memory DB', () => {
+  it('creates all tables (v1 + v2) in a fresh in-memory DB', () => {
     db = new Database(':memory:');
     runMigrations(db);
 
@@ -25,14 +25,15 @@ describe('MigrationRunner', () => {
     expect(names).toContain('monsters');
     expect(names).toContain('scenery');
     expect(names).toContain('player_state');
+    expect(names).toContain('room_allowed_exits');
   });
 
-  it('sets schema_version to 1 after migration', () => {
+  it('sets schema_version to 2 after migration', () => {
     db = new Database(':memory:');
     runMigrations(db);
 
     const row = db.prepare('SELECT version FROM schema_version').get() as { version: number };
-    expect(row.version).toBe(1);
+    expect(row.version).toBe(2);
   });
 
   it('is idempotent — running twice does not throw', () => {

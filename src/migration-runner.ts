@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 
-export const EXPECTED_SCHEMA_VERSION = 1;
+export const EXPECTED_SCHEMA_VERSION = 2;
 
 const V1_SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -56,6 +56,21 @@ CREATE TABLE IF NOT EXISTS player_state (
 );
 `;
 
+/**
+ * V2 adds the room_allowed_exits table.
+ * This tracks which directions a room is allowed to open up into (for generation).
+ * For the starting room, seeded from WORLD.md frontmatter exits.
+ * For generated rooms, seeded from the generator response (filtered allowable exits).
+ */
+const V2_ADDITIONS = `
+CREATE TABLE IF NOT EXISTS room_allowed_exits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  room_id INTEGER NOT NULL REFERENCES rooms(id),
+  direction TEXT NOT NULL,
+  UNIQUE(room_id, direction)
+);
+`;
+
 export function runMigrations(db: Database.Database): void {
   // Check if schema_version exists
   const tableExists = db
@@ -75,14 +90,23 @@ export function runMigrations(db: Database.Database): void {
     }
 
     if (row && row.version === EXPECTED_SCHEMA_VERSION) {
-      // Already migrated — apply CREATE TABLE IF NOT EXISTS idempotently
+      // Already at latest — apply all CREATE TABLE IF NOT EXISTS idempotently
       db.exec(V1_SCHEMA);
+      db.exec(V2_ADDITIONS);
+      return;
+    }
+
+    // V1 DB upgrading to V2
+    if (row && row.version === 1) {
+      db.exec(V2_ADDITIONS);
+      db.prepare('UPDATE schema_version SET version = ?').run(EXPECTED_SCHEMA_VERSION);
       return;
     }
   }
 
   // Fresh DB — run full schema
   db.exec(V1_SCHEMA);
+  db.exec(V2_ADDITIONS);
 
   // Seed schema_version if not set
   const existing = db.prepare('SELECT version FROM schema_version').get();

@@ -204,6 +204,27 @@
       #back-to-picker:hover {
         color: #888;
       }
+
+      /* ── Generation spinner ────────────────────────────────────────────── */
+
+      #spinner {
+        display: none;
+        color: #7ec8e3;
+        margin-left: 8px;
+        font-size: 12px;
+        animation: blink 0.8s step-start infinite;
+        user-select: none;
+      }
+
+      #spinner.active {
+        display: inline;
+      }
+
+      @keyframes blink {
+        0%   { opacity: 1; }
+        50%  { opacity: 0.2; }
+        100% { opacity: 1; }
+      }
     </style>
   </head>
   <body>
@@ -234,6 +255,7 @@
         <form id="input-form">
           <input id="input" type="text" autocomplete="off" spellcheck="false" />
         </form>
+        <span id="spinner">generating...</span>
       </div>
     </div>
 

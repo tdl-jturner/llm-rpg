@@ -5,6 +5,8 @@ import { handleSubmitInput } from './main-handler';
 import { openWorldDB } from './world-db';
 import type { WorldDB } from './world-db';
 import { loadWorldFile } from './world-file-loader';
+import { createStubLLM } from './room-generator';
+import { EventLogger } from './event-logger';
 import type {
   ListWorldsResponse,
   WorldSummary,
@@ -17,6 +19,10 @@ declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
 let worldDB: WorldDB | undefined;
+let activeLogger: EventLogger | undefined;
+
+// Deterministic stub LLM — will be replaced with real Ollama in issue 006
+const stubLLM = createStubLLM({ delayMs: 500 });
 
 // ---------------------------------------------------------------------------
 // Window
@@ -50,6 +56,10 @@ function worldsDir(): string {
 
 function worldFolderPath(folderName: string): string {
   return path.join(worldsDir(), folderName);
+}
+
+function logsDir(): string {
+  return path.join(app.getPath('userData'), 'logs');
 }
 
 /**
@@ -93,6 +103,16 @@ function readWorldTitle(folderName: string): string {
   return folderName;
 }
 
+/**
+ * Open a new EventLogger for the given world folder.
+ * Closes the previous logger if open.
+ */
+function openLogger(folderName: string): EventLogger {
+  activeLogger?.close();
+  activeLogger = new EventLogger(logsDir(), folderName);
+  return activeLogger;
+}
+
 // ---------------------------------------------------------------------------
 // IPC handlers
 // ---------------------------------------------------------------------------
@@ -100,7 +120,7 @@ function readWorldTitle(folderName: string): string {
 function registerIpcHandlers(): void {
   // ── Game input ────────────────────────────────────────────────────────────
   ipcMain.handle('submit-input', (_event, text: string) => {
-    return handleSubmitInput(text, worldDB);
+    return handleSubmitInput(text, worldDB, stubLLM, activeLogger);
   });
 
   // ── World picker: list ────────────────────────────────────────────────────
@@ -160,6 +180,7 @@ function registerIpcHandlers(): void {
     try {
       worldDB?.db.close();
       worldDB = openWorldDB(worldDir, world);
+      openLogger(folderName);
     } catch (e) {
       return { ok: false, error: `Could not open world database: ${e instanceof Error ? e.message : e}` };
     }
@@ -192,6 +213,7 @@ function registerIpcHandlers(): void {
     try {
       worldDB?.db.close();
       worldDB = openWorldDB(worldDir, parsed.world);
+      openLogger(folderName);
     } catch (e) {
       return { ok: false, error: `Could not open world database: ${e instanceof Error ? e.message : e}` };
     }
@@ -209,9 +231,11 @@ function registerIpcHandlers(): void {
     const dbPath = path.join(worldDir, 'world.sqlite');
     const mdPath = path.join(worldDir, 'WORLD.md');
 
-    // Close existing DB if it's for this world
+    // Close existing DB and logger if it's for this world
     worldDB?.db.close();
     worldDB = undefined;
+    activeLogger?.close();
+    activeLogger = undefined;
 
     // Delete the SQLite database; preserve WORLD.md and logs/
     try {
@@ -253,6 +277,8 @@ function registerIpcHandlers(): void {
 
     worldDB?.db.close();
     worldDB = undefined;
+    activeLogger?.close();
+    activeLogger = undefined;
 
     try {
       fs.rmSync(worldDir, { recursive: true, force: true });
@@ -279,5 +305,6 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   worldDB?.db.close();
+  activeLogger?.close();
   if (process.platform !== 'darwin') app.quit();
 });
