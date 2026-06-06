@@ -15,8 +15,8 @@ export interface AppConfig {
 }
 
 const DEFAULTS: AppConfig = {
-  heavyModel: 'qwen3:8b',
-  lightModel: 'gemma3:1b',
+  heavyModel: 'qwen3.5:9b',
+  lightModel: 'gemma4:e2b',
 };
 
 /**
