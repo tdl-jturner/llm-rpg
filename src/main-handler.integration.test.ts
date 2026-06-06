@@ -1,0 +1,595 @@
+/**
+ * Integration Tests: Full Turn Loop Against Real SQLite DB + Mocked Ollama
+ *
+ * These tests use a real WorldDB (backed by better-sqlite3 via openWorldDB) and
+ * a mocked LLMFunction that returns canned room JSON. They exercise the full
+ * handleSubmitInput → WorldDB → migration-runner → SQLite stack.
+ *
+ * Each test gets its own tmpDir so state never leaks between scenarios.
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { openWorldDB } from './world-db';
+import type { WorldDB } from './world-db';
+import type { WorldFile } from './world-file-loader';
+import { handleSubmitInput, resetDisambiguationState } from './main-handler';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Minimal WorldFile for testing — starting room with north/east/south/west exits. */
+function makeWorldFile(overrides: Partial<WorldFile['startingRoom']> = {}): WorldFile {
+  return {
+    title: 'Integration Test World',
+    body: 'A world used in integration tests.',
+    startingRoom: {
+      name: 'The Threshold',
+      fixed_description: 'You stand at the threshold.',
+      exits: ['north', 'south', 'east', 'west'],
+      ...overrides,
+    },
+  };
+}
+
+/** Canned room JSON for the mock LLM. Accepts a name override. */
+function cannedRoomJson(name = 'Generated Room', exits: string[] = ['south']): string {
+  return JSON.stringify({
+    name,
+    fixed_description: `A generated room called ${name}.`,
+    exits,
+    scenery: [],
+    items: [],
+    monsters: [],
+  });
+}
+
+/** Canned room JSON with a monster. */
+function cannedRoomWithMonsterJson(name = 'Dangerous Room'): string {
+  return JSON.stringify({
+    name,
+    fixed_description: 'A dangerous room.',
+    exits: ['south'],
+    scenery: [],
+    items: [],
+    monsters: [
+      {
+        name: 'Goblin',
+        inspection_description: 'A small green creature.',
+        room_blurb: 'A goblin crouches here.',
+        hp: 5,
+        damage_min: 1,
+        damage_max: 2,
+        drop: {
+          name: 'Goblin Knife',
+          inspection_description: 'A crude knife.',
+          room_blurb: 'A crude knife lies here.',
+          damage_min: 1,
+          damage_max: 3,
+        },
+      },
+    ],
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Test fixture: per-test isolated DB
+// ---------------------------------------------------------------------------
+
+let tmpDir: string;
+let db: WorldDB;
+
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-rpg-integration-test-'));
+  resetDisambiguationState();
+});
+
+afterEach(() => {
+  try { db?.db.close(); } catch { /* already closed */ }
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// Helper to seed the DB fresh for each test
+// ---------------------------------------------------------------------------
+function openFreshDB(worldFile: WorldFile = makeWorldFile()): WorldDB {
+  db = openWorldDB(tmpDir, worldFile);
+  return db;
+}
+
+// ---------------------------------------------------------------------------
+// Scenarios
+// ---------------------------------------------------------------------------
+
+describe('Integration: full turn loop', () => {
+
+  // ── LOOK ────────────────────────────────────────────────────────────────────
+
+  it('LOOK returns the starting room description', async () => {
+    const db = openFreshDB();
+    const llmFn = vi.fn();
+
+    const result = await handleSubmitInput('look', db, llmFn, undefined, 'world body');
+
+    expect(result.narrative[0]).toBe('> look');
+    // The blurb contains the fixed_description text from the world file
+    expect(result.narrative.join(' ')).toContain('threshold');
+    // HUD should reflect the starting room name
+    expect(result.hud?.room_name).toBe('The Threshold');
+  });
+
+  // ── INVENTORY when empty ───────────────────────────────────────────────────
+
+  it('INVENTORY when empty returns inventory_empty refusal', async () => {
+    const db = openFreshDB();
+    const llmFn = vi.fn();
+
+    const result = await handleSubmitInput('inventory', db, llmFn, undefined, 'world body');
+
+    expect(result.narrative).toContain("You aren't carrying anything.");
+  });
+
+  // ── INVENTORY with items ────────────────────────────────────────────────────
+
+  it('INVENTORY with items shows list with equipped marker', async () => {
+    const worldFile = makeWorldFile({
+      items: [
+        {
+          name: 'Iron Sword',
+          inspection_description: 'A sturdy sword.',
+          room_blurb: 'An iron sword rests here.',
+          damage_min: 3,
+          damage_max: 6,
+          type: 'weapon',
+        },
+        {
+          name: 'Rusty Dagger',
+          inspection_description: 'A corroded dagger.',
+          room_blurb: 'A rusty dagger lies here.',
+          damage_min: 1,
+          damage_max: 3,
+          type: 'weapon',
+        },
+      ],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    // TAKE iron sword first (auto-equip should happen)
+    await handleSubmitInput('take iron sword', db, llmFn, undefined, 'world body');
+    await handleSubmitInput('take rusty dagger', db, llmFn, undefined, 'world body');
+
+    const result = await handleSubmitInput('inventory', db, llmFn, undefined, 'world body');
+
+    const narrative = result.narrative.join('\n');
+    expect(narrative).toContain('Iron Sword (equipped)');
+    expect(narrative).toContain('Rusty Dagger');
+    // Dagger should NOT be marked as equipped
+    expect(narrative).not.toContain('Rusty Dagger (equipped)');
+  });
+
+  // ── TAKE a known item ──────────────────────────────────────────────────────
+
+  it('TAKE a known item moves it to inventory', async () => {
+    const worldFile = makeWorldFile({
+      items: [
+        {
+          name: 'Rusty Sword',
+          inspection_description: 'A corroded blade.',
+          room_blurb: 'A rusty sword lies here.',
+          damage_min: 1,
+          damage_max: 3,
+          type: 'weapon',
+        },
+      ],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    const result = await handleSubmitInput('take rusty sword', db, llmFn, undefined, 'world body');
+
+    expect(result.narrative.join(' ')).toContain('You take the Rusty Sword');
+
+    const inventory = db.getPlayerInventory();
+    expect(inventory).toHaveLength(1);
+    expect(inventory[0].name).toBe('Rusty Sword');
+
+    // Item is no longer in the room
+    const room = db.getCurrentRoom();
+    expect(db.getItemsInRoom(room.id)).toHaveLength(0);
+  });
+
+  // ── TAKE with auto-equip ────────────────────────────────────────────────────
+
+  it('TAKE with auto-equip: better weapon is equipped, weaker is not', async () => {
+    const worldFile = makeWorldFile({
+      items: [
+        {
+          name: 'Iron Sword',
+          inspection_description: 'A sturdy sword.',
+          room_blurb: 'An iron sword rests here.',
+          damage_min: 3,
+          damage_max: 6,
+          type: 'weapon',
+        },
+        {
+          name: 'Rusty Dagger',
+          inspection_description: 'A corroded dagger.',
+          room_blurb: 'A rusty dagger lies here.',
+          damage_min: 1,
+          damage_max: 3,
+          type: 'weapon',
+        },
+      ],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    // Take iron sword first — should auto-equip
+    const takeResult = await handleSubmitInput('take iron sword', db, llmFn, undefined, 'world body');
+    expect(takeResult.narrative.join(' ')).toContain('You wield it');
+
+    let equipped = db.getEquippedWeapon();
+    expect(equipped?.name).toBe('Iron Sword');
+
+    // Take rusty dagger — weaker, should NOT replace equipped
+    await handleSubmitInput('take rusty dagger', db, llmFn, undefined, 'world body');
+    equipped = db.getEquippedWeapon();
+    expect(equipped?.name).toBe('Iron Sword');
+  });
+
+  // ── TAKE an unknown noun ───────────────────────────────────────────────────
+
+  it('TAKE an unknown noun returns nothing_here_named refusal', async () => {
+    const db = openFreshDB();
+    const llmFn = vi.fn();
+
+    const result = await handleSubmitInput('take magic orb', db, llmFn, undefined, 'world body');
+
+    // The default nothing_here_named refusal
+    const narrative = result.narrative.join(' ');
+    expect(narrative).toContain("You don't see");
+  });
+
+  // ── DROP the equipped weapon ─────────────────────────────────────────────────
+
+  it('DROP the equipped weapon re-selects best remaining weapon', async () => {
+    const worldFile = makeWorldFile({
+      items: [
+        {
+          name: 'Iron Sword',
+          inspection_description: 'A sturdy sword.',
+          room_blurb: 'An iron sword rests here.',
+          damage_min: 3,
+          damage_max: 6,
+          type: 'weapon',
+        },
+        {
+          name: 'Rusty Dagger',
+          inspection_description: 'A corroded dagger.',
+          room_blurb: 'A rusty dagger lies here.',
+          damage_min: 1,
+          damage_max: 3,
+          type: 'weapon',
+        },
+      ],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    await handleSubmitInput('take iron sword', db, llmFn, undefined, 'world body');
+    await handleSubmitInput('take rusty dagger', db, llmFn, undefined, 'world body');
+
+    // Iron sword is equipped; drop it
+    const dropResult = await handleSubmitInput('drop iron sword', db, llmFn, undefined, 'world body');
+    expect(dropResult.narrative.join(' ')).toContain('You drop the Iron Sword');
+
+    // Rusty dagger should now be equipped
+    const equipped = db.getEquippedWeapon();
+    expect(equipped?.name).toBe('Rusty Dagger');
+  });
+
+  // ── Move into an existing room ─────────────────────────────────────────────
+
+  it('Move into an unmapped exit triggers room generation and updates player location', async () => {
+    const db = openFreshDB();
+    const llmFn = vi.fn().mockResolvedValue(cannedRoomJson('Northern Hall', ['south']));
+
+    const result = await handleSubmitInput('go north', db, llmFn, undefined, 'world body');
+
+    expect(llmFn).toHaveBeenCalled();
+    expect(result.narrative.join(' ')).toContain('Northern Hall');
+
+    // Player should now be in the new room
+    const room = db.getCurrentRoom();
+    expect(room.name).toBe('Northern Hall');
+  });
+
+  // ── Move back into starting room ────────────────────────────────────────────
+
+  it('Move north then south returns to starting room', async () => {
+    const db = openFreshDB();
+    const llmFn = vi.fn().mockResolvedValue(cannedRoomJson('Northern Hall', ['south']));
+
+    await handleSubmitInput('go north', db, llmFn, undefined, 'world body');
+    // Move back south — the exit should already be wired (back-exit)
+    const result = await handleSubmitInput('go south', db, llmFn, undefined, 'world body');
+
+    const room = db.getCurrentRoom();
+    expect(room.name).toBe('The Threshold');
+    // The HUD reflects the room name; narrative shows the room description text
+    expect(result.hud?.room_name).toBe('The Threshold');
+    expect(result.narrative.join(' ')).toContain('threshold');
+  });
+
+  // ── Move to no_exit direction ─────────────────────────────────────────────────
+
+  it('Move in a direction with no declared exit returns no_exit refusal', async () => {
+    // Starting room only has north exits
+    const worldFile = makeWorldFile({ exits: ['north'] });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    const result = await handleSubmitInput('go south', db, llmFn, undefined, 'world body');
+
+    expect(result.narrative).toContain("You can't go that way.");
+  });
+
+  // ── ATTACK — monster survives ────────────────────────────────────────────────
+
+  it('ATTACK — monster survives: both player and monster HP decrease', async () => {
+    const worldFile = makeWorldFile({
+      items: [
+        {
+          name: 'Battle Axe',
+          inspection_description: 'A heavy axe.',
+          room_blurb: 'A battle axe leans against the wall.',
+          damage_min: 10,
+          damage_max: 10, // deterministic damage
+          type: 'weapon',
+        },
+      ],
+      monsters: [
+        {
+          name: 'Cave Rat',
+          inspection_description: 'A scrawny rat.',
+          room_blurb: 'A cave rat lurks here.',
+          hp: 50, // high HP so it survives
+          max_hp: 50,
+          damage_min: 1,
+          damage_max: 1, // deterministic low damage
+        },
+      ],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    const playerBefore = db.getPlayerState();
+
+    // Equip the axe first
+    await handleSubmitInput('take battle axe', db, llmFn, undefined, 'world body');
+
+    const result = await handleSubmitInput('attack cave rat', db, llmFn, undefined, 'world body');
+
+    expect(result.narrative.join(' ')).toContain('You hit the Cave Rat');
+
+    // Monster should still be alive (hp was 50, axe deals 10 max)
+    const room = db.getCurrentRoom();
+    const monsters = db.getMonstersInRoom(room.id);
+    expect(monsters).toHaveLength(1);
+    expect(monsters[0].hp).toBeLessThan(50);
+
+    // Player took some damage (rat deals 1 per hit)
+    const playerAfter = db.getPlayerState();
+    expect(playerAfter.hp).toBeLessThanOrEqual(playerBefore.hp);
+  });
+
+  // ── ATTACK — monster dies ────────────────────────────────────────────────────
+
+  it('ATTACK — monster dies: drop item appears in room', async () => {
+    const worldFile = makeWorldFile({
+      items: [
+        {
+          name: 'Giant Hammer',
+          inspection_description: 'A massive hammer.',
+          room_blurb: 'A giant hammer rests here.',
+          damage_min: 100,
+          damage_max: 100, // one-shot kill
+          type: 'weapon',
+        },
+      ],
+      monsters: [
+        {
+          name: 'Cave Rat',
+          inspection_description: 'A scrawny rat.',
+          room_blurb: 'A cave rat lurks here.',
+          hp: 3,
+          max_hp: 3,
+          damage_min: 1,
+          damage_max: 1,
+        },
+      ],
+    });
+    // We need to add a drop item manually (frontmatter monsters have no drops)
+    // Instead: use a generated room via LLM with a monster that has a drop
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn().mockResolvedValue(cannedRoomWithMonsterJson('Goblin Den'));
+
+    // First take the hammer
+    await handleSubmitInput('take giant hammer', db, llmFn, undefined, 'world body');
+
+    // Move north to get a generated room with a goblin (has a drop)
+    await handleSubmitInput('go north', db, llmFn, undefined, 'world body');
+
+    const room = db.getCurrentRoom();
+    expect(room.name).toBe('Goblin Den');
+
+    const monstersBefore = db.getMonstersInRoom(room.id);
+    expect(monstersBefore).toHaveLength(1);
+    expect(monstersBefore[0].name).toBe('Goblin');
+
+    // Attack goblin — hammer does 100 damage, goblin has 5 HP, should die
+    const result = await handleSubmitInput('attack goblin', db, llmFn, undefined, 'world body');
+
+    expect(result.narrative.join(' ')).toContain('collapses');
+
+    // Monster should be gone from room
+    const monstersAfter = db.getMonstersInRoom(room.id);
+    expect(monstersAfter).toHaveLength(0);
+
+    // Drop item should appear in room
+    const items = db.getItemsInRoom(room.id);
+    expect(items.some((i) => i.name === 'Goblin Knife')).toBe(true);
+  });
+
+  // ── ATTACK — player dies / respawn ────────────────────────────────────────────
+
+  it('ATTACK — player dies: HP resets and player returns to starting room', async () => {
+    const worldFile = makeWorldFile({
+      monsters: [
+        {
+          name: 'Death Knight',
+          inspection_description: 'A terrifying armored warrior.',
+          room_blurb: 'A death knight stands here.',
+          hp: 9999,
+          max_hp: 9999,
+          damage_min: 9999,
+          damage_max: 9999, // instant kill
+        },
+      ],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    // Move north to a new room so respawn will return to starting room
+    llmFn.mockResolvedValue(cannedRoomJson('North Chamber', ['south']));
+    await handleSubmitInput('go north', db, llmFn, undefined, 'world body');
+
+    // Move back south to starting room (with death knight)
+    await handleSubmitInput('go south', db, llmFn, undefined, 'world body');
+
+    const playerBefore = db.getPlayerState();
+    expect(playerBefore.hp).toBe(20); // starting HP
+
+    // Attack the death knight — should die immediately
+    const result = await handleSubmitInput('attack death knight', db, llmFn, undefined, 'world body');
+
+    expect(result.narrative.join(' ')).toContain('Everything goes black');
+
+    // Player HP should be reset
+    const playerAfter = db.getPlayerState();
+    expect(playerAfter.hp).toBe(playerAfter.max_hp);
+
+    // Player should be in starting room
+    const room = db.getCurrentRoom();
+    expect(room.name).toBe('The Threshold');
+  });
+
+  // ── Parting hit ────────────────────────────────────────────────────────────
+
+  it('Parting hit: player takes damage when leaving room with engaged monster', async () => {
+    const worldFile = makeWorldFile({
+      monsters: [
+        {
+          name: 'Cave Rat',
+          inspection_description: 'A scrawny rat.',
+          room_blurb: 'A cave rat lurks here.',
+          hp: 9999,
+          max_hp: 9999,
+          damage_min: 5,
+          damage_max: 5, // predictable 5 damage per parting hit
+        },
+      ],
+    });
+    const db = openFreshDB(worldFile);
+
+    // Mock LLM for room generation when moving
+    const llmFn = vi.fn().mockResolvedValue(cannedRoomJson('North Chamber', ['south']));
+
+    // Engage the monster by attacking it once
+    await handleSubmitInput('attack cave rat', db, llmFn, undefined, 'world body');
+
+    const playerAfterAttack = db.getPlayerState();
+    const hpAfterAttack = playerAfterAttack.hp;
+
+    // Now try to leave — parting hit should trigger
+    const result = await handleSubmitInput('go north', db, llmFn, undefined, 'world body');
+
+    const playerAfterMove = db.getPlayerState();
+
+    // Either parting hit was applied (if player survived) or player died and respawned
+    const narrative = result.narrative.join(' ');
+    const tookPartingHit =
+      playerAfterMove.hp < hpAfterAttack ||
+      narrative.includes('strikes you') ||
+      narrative.includes('Everything goes black');
+
+    expect(tookPartingHit).toBe(true);
+  });
+
+  // ── Loop closure ────────────────────────────────────────────────────────────
+
+  it('Loop closure: walking north, east, south, west returns to starting room', async () => {
+    // Grid layout: start=(0,0,0), north=(0,1,0), NE=(1,1,0), south-of-NE=(1,0,0)
+    // Moving west from (1,0,0) → (0,0,0) = starting room → loop closure!
+    // Each generated room must declare the exits needed for the next move.
+    const db = openFreshDB();
+
+    let callCount = 0;
+    const llmFn = vi.fn().mockImplementation(() => {
+      callCount++;
+      // Room 1 at (0,1,0): needs 'east' so we can continue the square
+      if (callCount === 1) return Promise.resolve(cannedRoomJson('North Room', ['south', 'east']));
+      // Room 2 at (1,1,0): needs 'south' so we can continue
+      if (callCount === 2) return Promise.resolve(cannedRoomJson('NE Room', ['west', 'south']));
+      // Room 3 at (1,0,0): needs 'west' to close the loop back to (0,0,0)
+      if (callCount === 3) return Promise.resolve(cannedRoomJson('SE Room', ['north', 'west']));
+      return Promise.resolve(cannedRoomJson(`Room ${callCount}`, ['north', 'south', 'east', 'west']));
+    });
+
+    // Walk: n → e → s → w should return to (0,0,0) = The Threshold
+    await handleSubmitInput('go north', db, llmFn, undefined, 'world body');
+    await handleSubmitInput('go east', db, llmFn, undefined, 'world body');
+    await handleSubmitInput('go south', db, llmFn, undefined, 'world body');
+    const finalMove = await handleSubmitInput('go west', db, llmFn, undefined, 'world body');
+
+    const room = db.getCurrentRoom();
+    expect(room.name).toBe('The Threshold');
+    // The final move should show the starting room description
+    expect(finalMove.narrative.join(' ')).toContain('threshold');
+  });
+
+  // ── Respawn refills engaged monsters ────────────────────────────────────────
+
+  it('Respawn refills HP of all engaged monsters', async () => {
+    const worldFile = makeWorldFile({
+      monsters: [
+        {
+          name: 'Death Knight',
+          inspection_description: 'A terrifying warrior.',
+          room_blurb: 'A death knight stands here.',
+          hp: 9999,
+          max_hp: 9999,
+          damage_min: 9999,
+          damage_max: 9999,
+        },
+      ],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    // Attack the death knight to engage it — we should die immediately
+    await handleSubmitInput('attack death knight', db, llmFn, undefined, 'world body');
+
+    // After respawn, the death knight's HP should be fully refilled
+    // (respawnPlayer refills all engaged monster HP)
+    const room = db.getCurrentRoom();
+    const monsters = db.getMonstersInRoom(room.id);
+    expect(monsters).toHaveLength(1);
+    expect(monsters[0].hp).toBe(monsters[0].max_hp);
+    expect(monsters[0].engaged).toBe(0);
+  });
+});

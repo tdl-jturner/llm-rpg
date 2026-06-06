@@ -641,7 +641,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         // Persist generated monsters (and their drops)
         if (roomToCommit.monsters && roomToCommit.monsters.length > 0) {
           const stmtInsertMonster = db.prepare(
-            'INSERT INTO monsters (name, description, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
+            'INSERT INTO monsters (name, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)',
           );
           const stmtInsertDrop = db.prepare(
             'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -649,7 +649,6 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           for (const monster of roomToCommit.monsters) {
             const monsterResult = stmtInsertMonster.run(
               monster.name,
-              monster.inspection_description,
               `room:${newRoomId}`,
               monster.hp,
               monster.hp, // max_hp = generated hp
@@ -763,12 +762,11 @@ function seedIfEmpty(db: Database.Database, worldFile: WorldFile): void {
   // Insert any frontmatter-authored monsters (no drops — world authors control the starting experience directly)
   if (sr.monsters && sr.monsters.length > 0) {
     const insertMonster = db.prepare(
-      'INSERT INTO monsters (name, description, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
+      'INSERT INTO monsters (name, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)',
     );
     for (const monster of sr.monsters) {
       insertMonster.run(
         monster.name,
-        monster.inspection_description,
         `room:${roomId}`,
         monster.hp,
         monster.max_hp,

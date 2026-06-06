@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { openWorldDB } from './world-db';
+import type { WorldDB } from './world-db';
 import type { WorldFile } from './world-file-loader';
 
 // ---------------------------------------------------------------------------
@@ -28,14 +29,26 @@ function makeWorldFile(overrides: Partial<WorldFile['startingRoom']> = {}): Worl
 
 describe('seedIfEmpty — starting-room items and monsters', () => {
   let tmpDir: string;
+  const openDBs: WorldDB[] = [];
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'world-db-seed-test-'));
+    openDBs.length = 0;
   });
 
   afterEach(() => {
+    for (const db of openDBs) {
+      try { db.db.close(); } catch { /* already closed */ }
+    }
+    openDBs.length = 0;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  function openDB(worldFile: WorldFile): WorldDB {
+    const db = openWorldDB(tmpDir, worldFile);
+    openDBs.push(db);
+    return db;
+  }
 
   // ── Tracer bullet ──────────────────────────────────────────────────────────
 
@@ -53,7 +66,7 @@ describe('seedIfEmpty — starting-room items and monsters', () => {
       ],
     });
 
-    const db = openWorldDB(tmpDir, worldFile);
+    const db = openDB(worldFile);
 
     const items = db.getItemsInRoom(1);
     expect(items).toHaveLength(1);
@@ -63,8 +76,6 @@ describe('seedIfEmpty — starting-room items and monsters', () => {
     expect(items[0].type).toBe('weapon');
     expect(items[0].location).toBe('room:1');
     expect(items[0].disturbed).toBe(0);
-
-    db.db.close();
   });
 
   // ── TAKE works on seeded item ───────────────────────────────────────────
@@ -83,7 +94,7 @@ describe('seedIfEmpty — starting-room items and monsters', () => {
       ],
     });
 
-    const db = openWorldDB(tmpDir, worldFile);
+    const db = openDB(worldFile);
 
     const items = db.getItemsInRoom(1);
     expect(items).toHaveLength(1);
@@ -94,8 +105,6 @@ describe('seedIfEmpty — starting-room items and monsters', () => {
     expect(inventory).toHaveLength(1);
     expect(inventory[0].name).toBe('Rusty Sword');
     expect(db.getItemsInRoom(1)).toHaveLength(0);
-
-    db.db.close();
   });
 
   // ── Monsters inserted ──────────────────────────────────────────────────
@@ -115,7 +124,7 @@ describe('seedIfEmpty — starting-room items and monsters', () => {
       ],
     });
 
-    const db = openWorldDB(tmpDir, worldFile);
+    const db = openDB(worldFile);
 
     const monsters = db.getMonstersInRoom(1);
     expect(monsters).toHaveLength(1);
@@ -126,8 +135,6 @@ describe('seedIfEmpty — starting-room items and monsters', () => {
     expect(monsters[0].damage_max).toBe(2);
     expect(monsters[0].location).toBe('room:1');
     expect(monsters[0].engaged).toBe(0);
-
-    db.db.close();
   });
 
   // ── No regression: empty world ────────────────────────────────────────
@@ -135,12 +142,10 @@ describe('seedIfEmpty — starting-room items and monsters', () => {
   it('world with no items/monsters leaves room empty', () => {
     const worldFile = makeWorldFile(); // no items, no monsters
 
-    const db = openWorldDB(tmpDir, worldFile);
+    const db = openDB(worldFile);
 
     expect(db.getItemsInRoom(1)).toHaveLength(0);
     expect(db.getMonstersInRoom(1)).toHaveLength(0);
-
-    db.db.close();
   });
 
   // ── No regression: scenery still seeded ──────────────────────────────
@@ -156,12 +161,10 @@ describe('seedIfEmpty — starting-room items and monsters', () => {
       ],
     });
 
-    const db = openWorldDB(tmpDir, worldFile);
+    const db = openDB(worldFile);
 
     const scenery = db.getSceneryForRoom(1);
     expect(scenery).toHaveLength(1);
     expect(scenery[0].name).toBe('Ancient Altar');
-
-    db.db.close();
   });
 });
