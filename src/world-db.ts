@@ -834,6 +834,14 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         source: generationFailed ? 'stub' : 'llm',
       });
 
+      if (roomToCommit.monsters && roomToCommit.monsters.length > 0) {
+        logger?.logGenMonster({ room_id: newRoomId, count: roomToCommit.monsters.length });
+      }
+
+      if (roomToCommit.items && roomToCommit.items.length > 0) {
+        logger?.logGenItem({ room_id: newRoomId, count: roomToCommit.items.length });
+      }
+
       logger?.logStateMutate({
         entity: 'player',
         id: 1,

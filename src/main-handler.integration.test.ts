@@ -606,6 +606,13 @@ function readStateMutateEvents(logPath: string): Array<Record<string, unknown>> 
   return events.filter((e) => e['event'] === 'state.mutate');
 }
 
+function readEventsByType(logPath: string, eventType: string): Array<Record<string, unknown>> {
+  const raw = fs.readFileSync(logPath, 'utf-8').trim();
+  const lines = raw.split('\n').filter(Boolean);
+  const events = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+  return events.filter((e) => e['event'] === eventType);
+}
+
 // ---------------------------------------------------------------------------
 // state.mutate logging integration tests
 // ---------------------------------------------------------------------------
@@ -915,5 +922,50 @@ describe('state.mutate logging', () => {
     expect(locationEvent).toBeDefined();
     expect((locationEvent!['before'] as Record<string, unknown>)?.['location']).toMatch(/^room:/);
     expect(locationEvent!['reason']).toBe('take');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gen.monster and gen.item logging integration tests
+// ---------------------------------------------------------------------------
+
+describe('gen.monster and gen.item logging', () => {
+  let loggerTmpDir: string;
+  let logger: EventLogger;
+
+  beforeEach(() => {
+    loggerTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-rpg-gen-log-'));
+    logger = new EventLogger(loggerTmpDir, 'test-world');
+  });
+
+  afterEach(() => {
+    try { logger.close(); } catch { /* already closed */ }
+    fs.rmSync(loggerTmpDir, { recursive: true, force: true });
+  });
+
+  it('Moving into a generated room with a monster emits gen.monster event in the log', async () => {
+    const db = openFreshDB();
+    const llmFn = vi.fn().mockResolvedValue(cannedRoomWithMonsterJson('Goblin Lair'));
+
+    await handleSubmitInput('go north', db, llmFn, logger, 'world body');
+    logger.close();
+
+    const genMonsterEvents = readEventsByType(logger.logFilePath, 'gen.monster');
+    expect(genMonsterEvents).toHaveLength(1);
+    expect(genMonsterEvents[0]['count']).toBe(1);
+    expect(typeof genMonsterEvents[0]['room_id']).toBe('number');
+  });
+
+  it('Moving into a generated room with no monsters or items does not emit gen.monster or gen.item', async () => {
+    const db = openFreshDB();
+    const llmFn = vi.fn().mockResolvedValue(cannedRoomJson('Empty Room', ['south']));
+
+    await handleSubmitInput('go north', db, llmFn, logger, 'world body');
+    logger.close();
+
+    const genMonsterEvents = readEventsByType(logger.logFilePath, 'gen.monster');
+    const genItemEvents = readEventsByType(logger.logFilePath, 'gen.item');
+    expect(genMonsterEvents).toHaveLength(0);
+    expect(genItemEvents).toHaveLength(0);
   });
 });
