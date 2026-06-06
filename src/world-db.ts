@@ -5,7 +5,8 @@ import { runMigrations } from './migration-runner';
 import type { WorldFile } from './world-file-loader';
 import { directionToOffset, reciprocalDirection, needsRetroBackExit } from './grid-topology';
 import type { Coords } from './grid-topology';
-import { generateRoom } from './room-generator';
+import { generateRoom, LIMINAL_GAP_ROOM } from './room-generator';
+import type { NeighborState } from './room-generator';
 import type { LLMFunction } from './json-retry-runner';
 import type { EventLogger } from './event-logger';
 
@@ -31,7 +32,7 @@ export interface PlayerState {
 // ---------------------------------------------------------------------------
 
 export type MoveResult =
-  | { ok: true; room: Room; generated: boolean }
+  | { ok: true; room: Room; generated: boolean; generationFailed?: boolean }
   | { ok: false; reason: 'no_exit' | 'generation_failed'; error?: string };
 
 export interface WorldDB {
@@ -71,6 +72,9 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
 
   runMigrations(db);
   seedIfEmpty(db, worldFile);
+
+  // Capture world body for use in generation prompts
+  const worldBody = worldFile.body;
 
   // ── Prepared statements ──────────────────────────────────────────────────
   const stmtPlayerRoom = db.prepare('SELECT current_room_id FROM player_state WHERE id = 1');
@@ -206,24 +210,56 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       const ALL_DIRECTIONS = ['north', 'south', 'east', 'west', 'up', 'down'];
       const allowableExits = ALL_DIRECTIONS.filter((d) => d !== back);
 
+      // Compute neighbor state for each allowable direction
+      const neighborState: NeighborState = {
+        [back]: 'forced back-exit to previous room',
+      };
+      for (const d of allowableExits) {
+        const dOffset = directionToOffset(d);
+        const neighborCoords: Coords = {
+          x: targetCoords.x + dOffset.x,
+          y: targetCoords.y + dOffset.y,
+          z: targetCoords.z + dOffset.z,
+        };
+        const neighborRoom = stmtGetRoomByCoords.get(
+          neighborCoords.x,
+          neighborCoords.y,
+          neighborCoords.z,
+        ) as Room | undefined;
+        neighborState[d] = neighborRoom ? `existing room named ${neighborRoom.name}` : 'empty';
+      }
+
       const genResult = await generateRoom({
         coords: targetCoords,
         allowableExits,
         llmFn,
+        context: {
+          worldBody,
+          previousRoomDescription: fromRoom.fixed_description,
+          directionTraveled: direction,
+          neighborState,
+        },
       });
 
-      if (!genResult.ok) {
-        return { ok: false, reason: 'generation_failed', error: genResult.error };
+      // ── 5b. Handle generation failure: insert Liminal Gap fallback ───────
+      const roomToCommit = genResult.ok ? genResult.room : LIMINAL_GAP_ROOM;
+      const generationFailed = !genResult.ok;
+
+      if (generationFailed) {
+        logger?.logError({
+          message: 'Room generation failed — inserting Liminal Gap fallback',
+          detail: genResult.ok ? undefined : genResult.error,
+        });
       }
 
       // ── 6. Commit new room + exits to DB ─────────────────────────────────
       const commitTx = db.transaction(() => {
         const insertResult = stmtInsertRoom.run(
-          genResult.room.name,
+          roomToCommit.name,
           targetCoords.x,
           targetCoords.y,
           targetCoords.z,
-          genResult.room.fixed_description,
+          roomToCommit.fixed_description,
         );
         const newRoomId = insertResult.lastInsertRowid as number;
 
@@ -238,7 +274,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           'INSERT OR IGNORE INTO room_allowed_exits (room_id, direction) VALUES (?, ?)',
         );
         // Include the back-exit (always allowed) and the generated exits
-        const allNewRoomExits = [...new Set([back, ...genResult.room.exits])];
+        const allNewRoomExits = [...new Set([back, ...roomToCommit.exits])];
         for (const d of allNewRoomExits) {
           stmtInsertAllowed.run(newRoomId, d);
         }
@@ -251,15 +287,23 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
 
       const newRoomId = commitTx() as number;
 
-      // ── 7. Log the event ─────────────────────────────────────────────────
+      // ── 7. Log the gen.room event ─────────────────────────────────────────
       logger?.logGenRoom({
         room_id: newRoomId,
         coords: targetCoords,
-        source: 'stub',
+        source: generationFailed ? 'stub' : 'llm',
       });
 
       const newRoom = stmtGetRoom.get(newRoomId) as Room;
-      return { ok: true, room: newRoom, generated: true };
+
+      // Surface the liminal-gap indicator via the room's name so the renderer
+      // can detect it and show the one-line notice.
+      return {
+        ok: true,
+        room: newRoom,
+        generated: true,
+        generationFailed,
+      };
     },
   };
 }

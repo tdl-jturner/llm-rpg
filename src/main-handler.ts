@@ -40,11 +40,15 @@ export async function handleSubmitInput(
         if (result.reason === 'no_exit') {
           narrative.push(getRefusal('no_exit'));
         } else {
-          // generation_failed
+          // generation_failed (legacy path — currently unreachable since world-db
+          // now falls back to the Liminal Gap room rather than returning this error)
           narrative.push(`Generation failed: ${result.error ?? 'unknown error'}`);
         }
       } else {
         narrative.push(assembleBlurb(result.room));
+        if (result.generationFailed) {
+          narrative.push('(World generation hiccup logged.)');
+        }
       }
       break;
     }

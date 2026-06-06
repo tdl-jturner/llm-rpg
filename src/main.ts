@@ -5,7 +5,7 @@ import { handleSubmitInput } from './main-handler';
 import { openWorldDB } from './world-db';
 import type { WorldDB } from './world-db';
 import { loadWorldFile } from './world-file-loader';
-import { createStubLLM } from './room-generator';
+import { createRealLLM } from './room-generator';
 import { EventLogger } from './event-logger';
 import { loadConfig } from './app-config';
 import { isOllamaReachable, listPulledModels, pullModel, callModel } from './ollama-client';
@@ -27,8 +27,16 @@ let worldDB: WorldDB | undefined;
 let activeLogger: EventLogger | undefined;
 let appConfig: AppConfig = { heavyModel: 'qwen3:8b', lightModel: 'gemma3:1b' };
 
-// Deterministic stub LLM — will be replaced with real Ollama in issue 007
-const stubLLM = createStubLLM({ delayMs: 500 });
+// Real LLM function — uses the heavy model via Ollama, logs each call.
+// Re-created lazily when needed so it always picks up the current appConfig
+// and activeLogger.
+function getRealLLM() {
+  return createRealLLM(
+    appConfig.heavyModel,
+    callModel,
+    activeLogger ?? undefined,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Window
@@ -126,7 +134,7 @@ function openLogger(folderName: string): EventLogger {
 function registerIpcHandlers(): void {
   // ── Game input ────────────────────────────────────────────────────────────
   ipcMain.handle('submit-input', (_event, text: string) => {
-    return handleSubmitInput(text, worldDB, stubLLM, activeLogger);
+    return handleSubmitInput(text, worldDB, getRealLLM(), activeLogger);
   });
 
   // ── World picker: list ────────────────────────────────────────────────────

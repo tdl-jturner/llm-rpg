@@ -55,6 +55,16 @@ export class EventLogger {
     this.write(record);
   }
 
+  logError(event: { message: string; detail?: string }): void {
+    const record = {
+      event: 'error',
+      ts: new Date().toISOString(),
+      message: event.message,
+      ...(event.detail !== undefined ? { detail: event.detail } : {}),
+    };
+    this.write(record);
+  }
+
   close(): void {
     try {
       fs.closeSync(this.fd);
