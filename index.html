@@ -6,6 +6,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LLM RPG</title>
     <style>
+      /* ── Color palette (swap palette here) ───────────────────────────── */
+
+      :root {
+        --color-player-input: #7ec8e3;
+        --color-narrative:    #d4c5a9;
+        --color-system-msg:   #888888;
+        --color-damage:       #e35a5a;
+        --color-hud:          #d4c5a9;
+        --color-hud-bg:       #111111;
+        --color-bg:           #1a1a1a;
+        --color-border:       #333333;
+        --color-input-area:   #111111;
+        --color-accent:       #7ec8e3;
+      }
+
       * {
         box-sizing: border-box;
         margin: 0;
@@ -13,9 +28,9 @@
       }
 
       body {
-        background: #1a1a1a;
-        color: #d4c5a9;
-        font-family: 'Courier New', Courier, monospace;
+        background: var(--color-bg);
+        color: var(--color-narrative);
+        font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', 'Courier New', monospace;
         font-size: 14px;
         display: flex;
         flex-direction: column;
@@ -35,20 +50,20 @@
 
       #world-picker h1 {
         font-size: 18px;
-        color: #7ec8e3;
+        color: var(--color-accent);
         margin-bottom: 4px;
         letter-spacing: 2px;
         text-transform: uppercase;
       }
 
       #world-picker p.subtitle {
-        color: #888;
+        color: var(--color-system-msg);
         margin-bottom: 24px;
         font-size: 12px;
       }
 
       #world-picker .error-msg {
-        color: #e35a5a;
+        color: var(--color-damage);
         margin-bottom: 12px;
         min-height: 1.2em;
         font-size: 12px;
@@ -74,7 +89,7 @@
       button {
         background: #2a2a2a;
         border: 1px solid #444;
-        color: #d4c5a9;
+        color: var(--color-narrative);
         font-family: inherit;
         font-size: 12px;
         padding: 4px 10px;
@@ -88,8 +103,8 @@
 
       button.primary {
         background: #1a3a4a;
-        border-color: #7ec8e3;
-        color: #7ec8e3;
+        border-color: var(--color-accent);
+        color: var(--color-accent);
       }
 
       button.primary:hover {
@@ -98,7 +113,7 @@
 
       button.danger {
         border-color: #6a2a2a;
-        color: #e35a5a;
+        color: var(--color-damage);
       }
 
       button.danger:hover {
@@ -125,13 +140,13 @@
 
       #ollama-setup h2 {
         font-size: 16px;
-        color: #7ec8e3;
+        color: var(--color-accent);
         letter-spacing: 1px;
         text-transform: uppercase;
       }
 
       #ollama-status-msg {
-        color: #d4c5a9;
+        color: var(--color-narrative);
         text-align: center;
         max-width: 480px;
         line-height: 1.6;
@@ -139,7 +154,7 @@
       }
 
       #ollama-progress-msg {
-        color: #888;
+        color: var(--color-system-msg);
         font-size: 11px;
         text-align: center;
         max-width: 480px;
@@ -164,17 +179,19 @@
       }
 
       #hud {
-        background: #111;
-        border-bottom: 1px solid #333;
+        background: var(--color-hud-bg);
+        border-bottom: 1px solid var(--color-border);
         padding: 6px 16px;
         font-size: 12px;
-        color: #888;
+        color: var(--color-system-msg);
         display: flex;
-        gap: 24px;
+        gap: 4px;
+        white-space: nowrap;
+        overflow: hidden;
       }
 
       #hud span {
-        color: #d4c5a9;
+        color: var(--color-hud);
       }
 
       #scrollback {
@@ -191,24 +208,32 @@
       }
 
       #scrollback p.player-input {
-        color: #7ec8e3;
+        color: var(--color-player-input);
+      }
+
+      #scrollback p.narrative {
+        color: var(--color-narrative);
       }
 
       #scrollback p.system-msg {
-        color: #888;
+        color: var(--color-system-msg);
         font-style: italic;
+      }
+
+      #scrollback p.damage {
+        color: var(--color-damage);
       }
 
       #input-area {
         display: flex;
         align-items: center;
-        border-top: 1px solid #333;
+        border-top: 1px solid var(--color-border);
         padding: 8px 16px;
-        background: #111;
+        background: var(--color-input-area);
       }
 
       #input-area span {
-        color: #7ec8e3;
+        color: var(--color-player-input);
         margin-right: 8px;
         user-select: none;
       }
@@ -222,11 +247,11 @@
         flex: 1;
         background: transparent;
         border: none;
-        color: #7ec8e3;
+        color: var(--color-player-input);
         font-family: inherit;
         font-size: inherit;
         outline: none;
-        caret-color: #7ec8e3;
+        caret-color: var(--color-player-input);
       }
 
       #input:disabled {
@@ -245,14 +270,14 @@
       }
 
       #back-to-picker:hover {
-        color: #888;
+        color: var(--color-system-msg);
       }
 
       /* ── Generation spinner ────────────────────────────────────────────── */
 
       #spinner {
         display: none;
-        color: #7ec8e3;
+        color: var(--color-player-input);
         margin-left: 8px;
         font-size: 12px;
         animation: blink 0.8s step-start infinite;
@@ -296,8 +321,7 @@
     <!-- Game Screen -->
     <div id="game-view">
       <div id="hud">
-        HP: <span id="hud-hp">—</span> &nbsp;|&nbsp;
-        Room: <span id="hud-room">—</span>
+        HP:&nbsp;<span id="hud-hp">—</span>&nbsp;&nbsp;·&nbsp;&nbsp;Wielding:&nbsp;<span id="hud-weapon">fists (1–2)</span>&nbsp;&nbsp;·&nbsp;&nbsp;<span id="hud-room">—</span>
       </div>
       <div id="scrollback"></div>
       <div id="input-area">

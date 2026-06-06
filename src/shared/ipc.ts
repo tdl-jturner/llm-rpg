@@ -2,8 +2,16 @@ export interface SubmitInputArgs {
   text: string;
 }
 
+export interface HudData {
+  hp: number;
+  max_hp: number;
+  weapon: { name: string; damage_min: number; damage_max: number } | null;
+  room_name: string;
+}
+
 export interface SubmitInputResponse {
   narrative: string[];
+  hud?: HudData;
 }
 
 // ---------------------------------------------------------------------------
@@ -28,6 +36,7 @@ export interface CreateWorldResponse {
   folderName: string;
   title: string;
   startingRoomDescription: string;
+  hud?: HudData;
 }
 
 export type CreateWorldResult =
@@ -39,6 +48,7 @@ export interface ContinueWorldResponse {
   ok: true;
   title: string;
   currentRoomDescription: string;
+  hud?: HudData;
 }
 
 export type ContinueWorldResult =

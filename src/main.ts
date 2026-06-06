@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { handleSubmitInput } from './main-handler';
+import { handleSubmitInput, buildHudData } from './main-handler';
 import { openWorldDB } from './world-db';
 import type { WorldDB } from './world-db';
 import { loadWorldFile } from './world-file-loader';
@@ -219,6 +219,7 @@ function registerIpcHandlers(): void {
       folderName,
       title: world.title,
       startingRoomDescription: worldDB.getCurrentRoom().fixed_description,
+      hud: buildHudData(worldDB),
     };
   });
 
@@ -258,6 +259,7 @@ function registerIpcHandlers(): void {
       ok: true,
       title: parsed.world.title,
       currentRoomDescription: worldDB.getCurrentRoom().fixed_description,
+      hud: buildHudData(worldDB),
     };
   });
 

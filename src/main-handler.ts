@@ -1,4 +1,4 @@
-import type { SubmitInputResponse } from './shared/ipc';
+import type { SubmitInputResponse, HudData } from './shared/ipc';
 import { parseIntent } from './intent-parser';
 import type { Intent } from './intent-parser';
 import { parseIntentWithNl } from './nl-intent-parser';
@@ -44,6 +44,22 @@ export function resetDisambiguationState(): void {
 /** Exposed for testing — returns current disambiguation state. */
 export function getDisambiguationState(): DisambiguationState | null {
   return disambiguationState;
+}
+
+/**
+ * Build HUD snapshot from the current world state.
+ * Called after every turn to keep the renderer's HUD strip up to date.
+ */
+export function buildHudData(worldDB: WorldDB): HudData {
+  const player = worldDB.getPlayerState();
+  const weapon = worldDB.getEquippedWeapon();
+  const room = worldDB.getCurrentRoom();
+  return {
+    hp: player.hp,
+    max_hp: player.max_hp,
+    weapon: weapon ? { name: weapon.name, damage_min: weapon.damage_min, damage_max: weapon.damage_max } : null,
+    room_name: room.name,
+  };
 }
 
 export async function handleSubmitInput(
@@ -114,10 +130,12 @@ export async function handleSubmitInput(
       const scenery = worldDB.getSceneryForRoom(room.id);
       const items = worldDB.getItemsInRoom(room.id);
       const monsters = worldDB.getMonstersInRoom(room.id);
+      const exits = worldDB.getCurrentRoomExits();
       narrative.push(assembleBlurb(room, {
         items: items.map((i) => ({ name: i.name, room_blurb: i.room_blurb, disturbed: i.disturbed === 1 })),
         monsters: monsters.map((m) => ({ room_blurb: m.room_blurb })),
         scenery,
+        exits,
       }));
       break;
     }
@@ -252,10 +270,12 @@ export async function handleSubmitInput(
         const scenery = worldDB.getSceneryForRoom(room.id);
         const items = worldDB.getItemsInRoom(room.id);
         const monsters = worldDB.getMonstersInRoom(room.id);
+        const exits = worldDB.getCurrentRoomExits();
         narrative.push(assembleBlurb(room, {
           items: items.map((i) => ({ name: i.name, room_blurb: i.room_blurb, disturbed: i.disturbed === 1 })),
           monsters: monsters.map((m) => ({ room_blurb: m.room_blurb })),
           scenery,
+          exits,
         }));
         if (result.generationFailed) {
           narrative.push('(World generation hiccup logged.)');
@@ -340,7 +360,7 @@ export async function handleSubmitInput(
     }
   }
 
-  return { narrative };
+  return { narrative, hud: buildHudData(worldDB) };
 }
 
 /**

@@ -1,4 +1,4 @@
-import type { ElectronAPI } from './shared/ipc';
+import type { ElectronAPI, HudData } from './shared/ipc';
 
 declare global {
   interface Window {
@@ -27,6 +27,7 @@ const ollamaSetupButtons = document.getElementById('ollama-setup-buttons') as HT
 
 // Game view
 const hudHp = document.getElementById('hud-hp') as HTMLSpanElement;
+const hudWeapon = document.getElementById('hud-weapon') as HTMLSpanElement;
 const hudRoom = document.getElementById('hud-room') as HTMLSpanElement;
 const scrollback = document.getElementById('scrollback') as HTMLDivElement;
 const input = document.getElementById('input') as HTMLInputElement;
@@ -44,7 +45,21 @@ let activeWorldFolder: string | null = null;
 
 // Deferred game navigation — stored when the user picks a world while the
 // setup screen hasn't run yet, or to re-enter game after setup succeeds.
-let pendingGameNav: { roomDescription: string; roomName?: string } | null = null;
+let pendingGameNav: { roomDescription: string; roomName?: string; hud?: HudData } | null = null;
+
+// ---------------------------------------------------------------------------
+// HUD
+// ---------------------------------------------------------------------------
+
+function updateHud(hud: HudData): void {
+  hudHp.textContent = `${hud.hp}/${hud.max_hp}`;
+  if (hud.weapon) {
+    hudWeapon.textContent = `${hud.weapon.name} (${hud.weapon.damage_min}–${hud.weapon.damage_max})`;
+  } else {
+    hudWeapon.textContent = 'fists (1–2)';
+  }
+  hudRoom.textContent = hud.room_name;
+}
 
 // ---------------------------------------------------------------------------
 // View switching
@@ -64,7 +79,7 @@ function showSetup(): void {
   gameViewEl.style.display = 'none';
 }
 
-function showGame(roomDescription: string, roomName?: string): void {
+function showGame(roomDescription: string, roomName?: string, hud?: HudData): void {
   worldPickerEl.style.display = 'none';
   ollamaSetupEl.style.display = 'none';
   gameViewEl.style.display = 'flex';
@@ -72,7 +87,11 @@ function showGame(roomDescription: string, roomName?: string): void {
   history.length = 0;
   historyIndex = -1;
 
-  if (roomName) hudRoom.textContent = roomName;
+  if (hud) {
+    updateHud(hud);
+  } else if (roomName) {
+    hudRoom.textContent = roomName;
+  }
   appendLine(roomDescription, 'narrative');
   input.focus();
 }
@@ -111,7 +130,7 @@ async function runSetupCheck(): Promise<void> {
     if (pendingGameNav) {
       const nav = pendingGameNav;
       pendingGameNav = null;
-      showGame(nav.roomDescription, nav.roomName);
+      showGame(nav.roomDescription, nav.roomName, nav.hud);
     } else {
       showPicker();
     }
@@ -222,8 +241,7 @@ async function onContinueWorld(folderName: string): Promise<void> {
     return;
   }
   activeWorldFolder = folderName;
-  hudRoom.textContent = result.title;
-  pendingGameNav = { roomDescription: result.currentRoomDescription, roomName: result.title };
+  pendingGameNav = { roomDescription: result.currentRoomDescription, roomName: result.title, hud: result.hud };
   runSetupCheck();
 }
 
@@ -264,8 +282,7 @@ btnCreateWorld.addEventListener('click', async () => {
     return;
   }
   activeWorldFolder = result.folderName;
-  hudRoom.textContent = result.title;
-  pendingGameNav = { roomDescription: result.startingRoomDescription, roomName: result.title };
+  pendingGameNav = { roomDescription: result.startingRoomDescription, roomName: result.title, hud: result.hud };
   runSetupCheck();
 });
 
@@ -284,12 +301,44 @@ btnCreateWorld.insertAdjacentElement('afterend', openAllLogsBtn);
 // Game loop
 // ---------------------------------------------------------------------------
 
-function appendLine(text: string, role: 'player-input' | 'narrative' | 'system-msg' = 'narrative'): void {
+function appendLine(text: string, role: 'player-input' | 'narrative' | 'system-msg' | 'damage' = 'narrative'): void {
   const p = document.createElement('p');
   p.textContent = text;
   p.className = role;
   scrollback.appendChild(p);
   scrollback.scrollTop = scrollback.scrollHeight;
+}
+
+/** Classify a narrative line returned from the engine into a display role. */
+function classifyLine(line: string): 'player-input' | 'narrative' | 'system-msg' | 'damage' {
+  if (line.startsWith('> ')) return 'player-input';
+
+  // Damage / death events
+  if (
+    /\d+ damage/i.test(line) ||
+    /collapses/i.test(line) ||
+    /goes black/i.test(line) ||
+    /wake at the threshold/i.test(line) ||
+    /strikes back/i.test(line)
+  ) {
+    return 'damage';
+  }
+
+  // System messages
+  if (
+    /^\(.*\)$/.test(line) ||
+    line.startsWith('You take the') ||
+    line.startsWith('You drop the') ||
+    line.startsWith('You are carrying') ||
+    line.startsWith('You already have') ||
+    line.includes('You wield it') ||
+    line.startsWith('As you leave') ||
+    line.startsWith('Which do you mean')
+  ) {
+    return 'system-msg';
+  }
+
+  return 'narrative';
 }
 
 form.addEventListener('submit', async (e) => {
@@ -298,6 +347,7 @@ form.addEventListener('submit', async (e) => {
   if (!text) return;
 
   history.unshift(text);
+  if (history.length > 100) history.length = 100;
   historyIndex = -1;
   input.value = '';
   input.disabled = true;
@@ -305,9 +355,9 @@ form.addEventListener('submit', async (e) => {
 
   const response = await window.electronAPI.submitInput(text);
   for (const line of response.narrative) {
-    const isPlayerEcho = line.startsWith('> ');
-    appendLine(line, isPlayerEcho ? 'player-input' : 'narrative');
+    appendLine(line, classifyLine(line));
   }
+  if (response.hud) updateHud(response.hud);
 
   spinner.classList.remove('active');
   input.disabled = false;

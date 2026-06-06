@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { handleSubmitInput } from './main-handler';
+import { handleSubmitInput, buildHudData } from './main-handler';
 
 describe('handleSubmitInput – no DB', () => {
   it('echoes input prefixed with "> " when no DB provided', async () => {
@@ -39,6 +39,7 @@ function makeStubWorldDB() {
     getSceneryForRoom: vi.fn().mockReturnValue([]),
     getItemsInRoom: vi.fn().mockReturnValue([]),
     getMonstersInRoom: vi.fn().mockReturnValue([]),
+    getCurrentRoomExits: vi.fn().mockReturnValue([]),
     getPlayerInventory: vi.fn().mockReturnValue([]),
     getEquippedWeapon: vi.fn().mockReturnValue(null),
     movePlayer: vi.fn(),
@@ -238,5 +239,95 @@ describe('handleSubmitInput – refusal overrides', () => {
     expect(logRefusal).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'intent_unparseable', overridden: true }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildHudData
+// ---------------------------------------------------------------------------
+
+describe('buildHudData', () => {
+  it('returns hp, max_hp, room_name, and null weapon when unarmed', () => {
+    const db = makeStubWorldDB();
+    // getPlayerState returns { hp: 10, max_hp: 10 } by default
+    // getEquippedWeapon returns null by default
+    // getCurrentRoom returns { name: 'The Threshold', ... }
+
+    const hud = buildHudData(db as never);
+
+    expect(hud.hp).toBe(10);
+    expect(hud.max_hp).toBe(10);
+    expect(hud.room_name).toBe('The Threshold');
+    expect(hud.weapon).toBeNull();
+  });
+
+  it('returns weapon info when a weapon is equipped', () => {
+    const db = makeStubWorldDB();
+    db.getEquippedWeapon = vi.fn().mockReturnValue({
+      id: 5,
+      name: 'Iron Sword',
+      damage_min: 3,
+      damage_max: 7,
+      location: 'player_inventory',
+      type: 'weapon',
+      disturbed: 1,
+      inspection_description: 'A sword.',
+      room_blurb: 'A sword lies here.',
+    });
+
+    const hud = buildHudData(db as never);
+
+    expect(hud.weapon).toEqual({ name: 'Iron Sword', damage_min: 3, damage_max: 7 });
+  });
+
+  it('reflects updated hp after damage', () => {
+    const db = makeStubWorldDB();
+    db.getPlayerState = vi.fn().mockReturnValue({ hp: 4, max_hp: 20, equipped_weapon_id: null });
+
+    const hud = buildHudData(db as never);
+
+    expect(hud.hp).toBe(4);
+    expect(hud.max_hp).toBe(20);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleSubmitInput – hud in response
+// ---------------------------------------------------------------------------
+
+describe('handleSubmitInput – hud field', () => {
+  it('includes hud in response when DB is provided', async () => {
+    const db = makeStubWorldDB();
+    const result = await handleSubmitInput('look', db as never);
+
+    expect(result.hud).toBeDefined();
+    expect(result.hud?.hp).toBe(10);
+    expect(result.hud?.max_hp).toBe(10);
+    expect(result.hud?.room_name).toBe('The Threshold');
+    expect(result.hud?.weapon).toBeNull();
+  });
+
+  it('does not include hud when no DB provided (fallback path)', async () => {
+    const result = await handleSubmitInput('hello');
+    expect(result.hud).toBeUndefined();
+  });
+
+  it('includes weapon data in hud after equipping', async () => {
+    const db = makeStubWorldDB();
+    db.getEquippedWeapon = vi.fn().mockReturnValue({
+      id: 2,
+      name: 'Rusty Dagger',
+      damage_min: 1,
+      damage_max: 4,
+      location: 'player_inventory',
+      type: 'weapon',
+      disturbed: 1,
+      inspection_description: 'A dagger.',
+      room_blurb: 'A dagger lies here.',
+    });
+
+    const result = await handleSubmitInput('look', db as never);
+
+    expect(result.hud?.weapon).toEqual({ name: 'Rusty Dagger', damage_min: 1, damage_max: 4 });
   });
 });
