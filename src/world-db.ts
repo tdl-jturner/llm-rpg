@@ -2,17 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { runMigrations } from './migration-runner';
-
-const STARTING_ROOM = {
-  name: 'The Beginning',
-  x: 0,
-  y: 0,
-  z: 0,
-  fixed_description:
-    'You stand in a small stone chamber. Rough-hewn walls press close on every side. ' +
-    'A single torch flickers in a rusted bracket, casting long shadows across the floor. ' +
-    'This is where your journey begins.',
-};
+import type { WorldFile } from './world-file-loader';
 
 export interface Room {
   id: number;
@@ -36,8 +26,13 @@ export interface WorldDB {
   getCurrentRoom(): Room;
 }
 
-export function openWorldDB(userDataPath: string): WorldDB {
-  const worldDir = path.join(userDataPath, 'worlds', '_dev');
+/**
+ * Open (or create) the world database for a given world folder.
+ *
+ * @param worldDir  Absolute path to the world's directory (contains world.sqlite).
+ * @param worldFile The parsed WorldFile whose starting_room should be inserted on first run.
+ */
+export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
   fs.mkdirSync(worldDir, { recursive: true });
 
   const dbPath = path.join(worldDir, 'world.sqlite');
@@ -48,7 +43,7 @@ export function openWorldDB(userDataPath: string): WorldDB {
   db.pragma('foreign_keys = ON');
 
   runMigrations(db);
-  seedIfEmpty(db);
+  seedIfEmpty(db, worldFile);
 
   return {
     db,
@@ -64,27 +59,40 @@ export function openWorldDB(userDataPath: string): WorldDB {
   };
 }
 
-function seedIfEmpty(db: Database.Database): void {
+function seedIfEmpty(db: Database.Database, worldFile: WorldFile): void {
   const roomCount = (
     db.prepare('SELECT COUNT(*) as cnt FROM rooms').get() as { cnt: number }
   ).cnt;
 
   if (roomCount > 0) return;
 
-  // Insert starting room
+  const sr = worldFile.startingRoom;
+
+  // Insert starting room at (0, 0, 0)
   const result = db
     .prepare(
       'INSERT INTO rooms (name, x, y, z, fixed_description) VALUES (?, ?, ?, ?, ?)',
     )
-    .run(
-      STARTING_ROOM.name,
-      STARTING_ROOM.x,
-      STARTING_ROOM.y,
-      STARTING_ROOM.z,
-      STARTING_ROOM.fixed_description,
-    );
+    .run(sr.name, 0, 0, 0, sr.fixed_description);
 
   const roomId = result.lastInsertRowid as number;
+
+  // Insert exits from frontmatter — note: these are outbound only (destinations don't exist yet).
+  // They are stored as references by direction so the movement engine can look them up.
+  // In this slice, exits don't link to target rooms; that comes in issue 004.
+  // We store exit directions as metadata on the room record later; for now the exits table
+  // requires a to_room_id, so we skip pre-populating exits here. The movement engine will
+  // generate rooms on demand (issue 004).
+
+  // Insert any frontmatter-authored scenery
+  if (sr.scenery) {
+    const insertScenery = db.prepare(
+      'INSERT INTO scenery (room_id, name, description) VALUES (?, ?, ?)',
+    );
+    for (const s of sr.scenery) {
+      insertScenery.run(roomId, s.name, s.inspection_description);
+    }
+  }
 
   // Insert initial player state
   db.prepare(
