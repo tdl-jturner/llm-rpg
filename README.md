@@ -88,6 +88,8 @@ Combat is turn-based and per-command. One `attack` command resolves one exchange
 
 Every monster drops a weapon on death. Picking up a weapon with higher average damage than your current one equips it automatically.
 
+About 35% of generated rooms contain armor (shields, helmets, breastplates, etc.). Picking up armor with a higher armor value than what you're wearing equips it automatically. Equipped armor reduces incoming damage by a flat amount each hit, shown in the HUD.
+
 If you die: you respawn at the starting room with full HP, keeping all your items. Every monster you fought has its HP refilled.
 
 ## Configuration

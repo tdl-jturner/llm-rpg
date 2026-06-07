@@ -18,6 +18,8 @@ export interface CombatPlayer {
   damage_min: number;
   /** Equipped weapon damage_max; use FIST_DAMAGE_MAX if unarmed. */
   damage_max: number;
+  /** Flat damage reduction from equipped armor; 0 if unarmored. */
+  armor_value: number;
 }
 
 /** Monster stats needed for one combat exchange. */
@@ -74,8 +76,9 @@ export function resolveCombat(
     };
   }
 
-  // Monster retaliates
-  const monster_damage_dealt = rollDamage(monster.damage_min, monster.damage_max, rng);
+  // Monster retaliates — flat armor reduction, floor at 0
+  const rawMonsterDamage = rollDamage(monster.damage_min, monster.damage_max, rng);
+  const monster_damage_dealt = Math.max(0, rawMonsterDamage - player.armor_value);
   const playerHpAfter = player.hp - monster_damage_dealt;
 
   return {

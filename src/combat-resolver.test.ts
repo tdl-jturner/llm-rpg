@@ -13,7 +13,7 @@ describe('resolveCombat', () => {
       // rng returns 0 → min damage, then 0 → min damage for monster
       const rng = makeRng([0, 0]);
       const result = resolveCombat(
-        { hp: 20, max_hp: 20, damage_min: 3, damage_max: 7 },
+        { hp: 20, max_hp: 20, damage_min: 3, damage_max: 7, armor_value: 0 },
         { id: 1, hp: 50, max_hp: 50, damage_min: 2, damage_max: 4 },
         rng,
       );
@@ -25,7 +25,7 @@ describe('resolveCombat', () => {
       // rng returns 1.0 → max damage
       const rng = makeRng([1 - Number.EPSILON, 0]);
       const result = resolveCombat(
-        { hp: 20, max_hp: 20, damage_min: 3, damage_max: 7 },
+        { hp: 20, max_hp: 20, damage_min: 3, damage_max: 7, armor_value: 0 },
         { id: 1, hp: 50, max_hp: 50, damage_min: 2, damage_max: 4 },
         rng,
       );
@@ -35,7 +35,7 @@ describe('resolveCombat', () => {
     it('uses fist damage (1-2) when unarmed', () => {
       const rng = makeRng([0, 0]);
       const result = resolveCombat(
-        { hp: 20, max_hp: 20, damage_min: FIST_DAMAGE_MIN, damage_max: FIST_DAMAGE_MAX },
+        { hp: 20, max_hp: 20, damage_min: FIST_DAMAGE_MIN, damage_max: FIST_DAMAGE_MAX, armor_value: 0 },
         { id: 1, hp: 50, max_hp: 50, damage_min: 2, damage_max: 4 },
         rng,
       );
@@ -48,7 +48,7 @@ describe('resolveCombat', () => {
       // rng always returns 1 so player deals max damage
       const rng = makeRng([1 - Number.EPSILON]);
       const result = resolveCombat(
-        { hp: 20, max_hp: 20, damage_min: 10, damage_max: 20 },
+        { hp: 20, max_hp: 20, damage_min: 10, damage_max: 20, armor_value: 0 },
         { id: 1, hp: 5, max_hp: 5, damage_min: 2, damage_max: 4 },
         rng,
       );
@@ -61,7 +61,7 @@ describe('resolveCombat', () => {
       // exactly-lethal hit
       const rng = makeRng([0]);
       const result = resolveCombat(
-        { hp: 20, max_hp: 20, damage_min: 5, damage_max: 5 },
+        { hp: 20, max_hp: 20, damage_min: 5, damage_max: 5, armor_value: 0 },
         { id: 1, hp: 5, max_hp: 5, damage_min: 2, damage_max: 4 },
         rng,
       );
@@ -75,7 +75,7 @@ describe('resolveCombat', () => {
       // 1st rng call → player does 1 (min), 2nd → monster does max
       const rng = makeRng([0, 1 - Number.EPSILON]);
       const result = resolveCombat(
-        { hp: 3, max_hp: 20, damage_min: 1, damage_max: 1 },
+        { hp: 3, max_hp: 20, damage_min: 1, damage_max: 1, armor_value: 0 },
         { id: 1, hp: 50, max_hp: 50, damage_min: 5, damage_max: 10 },
         rng,
       );
@@ -87,7 +87,7 @@ describe('resolveCombat', () => {
     it('player_died false when monster damage < player hp', () => {
       const rng = makeRng([0, 0]); // both deal min
       const result = resolveCombat(
-        { hp: 20, max_hp: 20, damage_min: 2, damage_max: 4 },
+        { hp: 20, max_hp: 20, damage_min: 2, damage_max: 4, armor_value: 0 },
         { id: 1, hp: 50, max_hp: 50, damage_min: 1, damage_max: 2 },
         rng,
       );
@@ -100,7 +100,7 @@ describe('resolveCombat', () => {
     it('returns monster_dead: false, player_died: false', () => {
       const rng = makeRng([0, 0]);
       const result = resolveCombat(
-        { hp: 20, max_hp: 20, damage_min: 1, damage_max: 3 },
+        { hp: 20, max_hp: 20, damage_min: 1, damage_max: 3, armor_value: 0 },
         { id: 1, hp: 50, max_hp: 50, damage_min: 1, damage_max: 2 },
         rng,
       );
@@ -114,7 +114,7 @@ describe('resolveCombat', () => {
       // weapon with 0-0 damage
       const rng = makeRng([0, 0]);
       const result = resolveCombat(
-        { hp: 20, max_hp: 20, damage_min: 0, damage_max: 0 },
+        { hp: 20, max_hp: 20, damage_min: 0, damage_max: 0, armor_value: 0 },
         { id: 1, hp: 50, max_hp: 50, damage_min: 0, damage_max: 0 },
         rng,
       );

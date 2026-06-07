@@ -6,6 +6,7 @@ export interface HudData {
   hp: number;
   max_hp: number;
   weapon: { name: string; damage_min: number; damage_max: number } | null;
+  armor: { name: string; armor_value: number } | null;
   room_name: string;
 }
 

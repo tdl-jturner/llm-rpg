@@ -42,6 +42,7 @@ function makeStubWorldDB() {
     getCurrentRoomExits: vi.fn().mockReturnValue([]),
     getPlayerInventory: vi.fn().mockReturnValue([]),
     getEquippedWeapon: vi.fn().mockReturnValue(null),
+    getEquippedArmor: vi.fn().mockReturnValue(null),
     movePlayer: vi.fn(),
     takeItem: vi.fn(),
     dropItem: vi.fn(),
@@ -60,7 +61,7 @@ describe('handleSubmitInput – NL fallback routing', () => {
     const llmFn = vi.fn().mockResolvedValue(
       JSON.stringify({
         name: 'Room', fixed_description: 'A room.', exits: [],
-        scenery: [], items: [], monsters: [],
+        scenery: [], items: [], armor: [], monsters: [],
       }),
     );
     db.movePlayer = vi.fn().mockResolvedValue({ ok: false, reason: 'no_exit' });

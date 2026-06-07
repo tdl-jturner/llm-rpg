@@ -37,6 +37,14 @@ export interface GeneratedWeaponItem {
   type: 'weapon';
 }
 
+export interface GeneratedArmorItem {
+  name: string;
+  inspection_description: string;
+  room_blurb: string;
+  armor_value: number;
+  type: 'armor';
+}
+
 export interface GeneratedMonsterDrop {
   name: string;
   inspection_description: string;
@@ -62,6 +70,7 @@ export interface GeneratedRoom {
   exits: string[];
   scenery?: GeneratedSceneryItem[];
   items?: GeneratedWeaponItem[];
+  armor?: GeneratedArmorItem[];
   monsters?: GeneratedMonster[];
 }
 
@@ -102,6 +111,8 @@ export interface MonsterBoundsContext {
   damage_max: number;
   drop_damage_min: number;
   drop_damage_max: number;
+  armor_value_min: number;
+  armor_value_max: number;
 }
 
 export interface GenerateRoomOptions {
@@ -134,6 +145,7 @@ export const LIMINAL_GAP_ROOM: GeneratedRoom = {
   exits: [],
   scenery: [],
   items: [],
+  armor: [],
   monsters: [],
 };
 
@@ -143,7 +155,7 @@ export const LIMINAL_GAP_ROOM: GeneratedRoom = {
 
 const ROOM_SCHEMA = {
   type: 'object',
-  required: ['name', 'fixed_description', 'exits', 'scenery', 'items', 'monsters'],
+  required: ['name', 'fixed_description', 'exits', 'scenery', 'items', 'armor', 'monsters'],
   properties: {
     name: { type: 'string' },
     fixed_description: { type: 'string' },
@@ -171,6 +183,20 @@ const ROOM_SCHEMA = {
           room_blurb: { type: 'string' },
           damage_min: { type: 'number' },
           damage_max: { type: 'number' },
+          type: { type: 'string' },
+        },
+      },
+    },
+    armor: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'inspection_description', 'room_blurb', 'armor_value', 'type'],
+        properties: {
+          name: { type: 'string' },
+          inspection_description: { type: 'string' },
+          room_blurb: { type: 'string' },
+          armor_value: { type: 'number' },
           type: { type: 'string' },
         },
       },
@@ -248,6 +274,7 @@ export function createStubLLM(options: StubLLMOptions = {}): LLMFunction {
       exits,
       scenery: [],
       items: [],
+      armor: [],
       monsters: [],
     };
 
@@ -373,6 +400,8 @@ export function buildGenerationPrompt(
     '"scenery": [{ "name": string, "inspection_description": string, "room_blurb": string }], ' +
     '"items": [{ "name": string, "inspection_description": string, "room_blurb": string, ' +
     '"damage_min": number, "damage_max": number, "type": "weapon" }], ' +
+    '"armor": [{ "name": string, "inspection_description": string, "room_blurb": string, ' +
+    '"armor_value": number, "type": "armor" }], ' +
     '"monsters": [{ "name": string, "inspection_description": string, "room_blurb": string, ' +
     '"hp": number, "damage_min": number, "damage_max": number, ' +
     '"drop": { "name": string, "inspection_description": string, "room_blurb": string, ' +
@@ -390,6 +419,21 @@ export function buildGenerationPrompt(
     '"inspection_description" is 2–3 sentences of close detail when examined. ' +
     'type must always be "weapon".',
   );
+
+  // ── Armor generation instruction ─────────────────────────────────────────
+  if (monsterBounds) {
+    parts.push(
+      `Include 0 or 1 armor piece in the "armor" array. About 35% of rooms should have armor. ` +
+      `Armor pieces are wearable protection: shields, helmets, gauntlets, breastplates, etc. ` +
+      `armor_value MUST be between ${monsterBounds.armor_value_min} and ${monsterBounds.armor_value_max}. ` +
+      `"room_blurb" is a 1-sentence note of where it is found. ` +
+      `"inspection_description" is 2–3 sentences of close detail when examined. ` +
+      `type must always be "armor". If no armor is desired, use an empty array.`,
+    );
+  } else {
+    parts.push('Include an empty "armor" array: [].');
+  }
+  parts.push('');
 
   // ── Monster generation instruction ───────────────────────────────────────
   if (monsterBounds) {
@@ -436,6 +480,18 @@ function validateGeneratedRoom(
       `exits contains invalid direction(s): ${invalidExits.join(', ')}. ` +
       `Only these directions are allowed: ${allowableExits.join(', ')}.`
     );
+  }
+
+  // Validate armor bounds if supplied
+  if (monsterBounds && room.armor) {
+    for (const piece of room.armor) {
+      if (piece.armor_value < monsterBounds.armor_value_min || piece.armor_value > monsterBounds.armor_value_max) {
+        return (
+          `armor "${piece.name}" armor_value ${piece.armor_value} is outside allowed range ` +
+          `[${monsterBounds.armor_value_min}, ${monsterBounds.armor_value_max}].`
+        );
+      }
+    }
   }
 
   // Validate monster bounds if supplied
@@ -525,6 +581,7 @@ export async function generateRoom(options: GenerateRoomOptions): Promise<Genera
       exits: result.value.exits,
       scenery: result.value.scenery ?? [],
       items: result.value.items ?? [],
+      armor: result.value.armor ?? [],
       monsters: result.value.monsters ?? [],
     },
   };

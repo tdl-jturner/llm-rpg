@@ -10,8 +10,8 @@ import type { NeighborState } from './room-generator';
 import { computeMonsterBounds, FIST_DAMAGE_MIN as BALANCE_FIST_MIN, FIST_DAMAGE_MAX as BALANCE_FIST_MAX } from './balance-calculator';
 import type { LLMFunction } from './json-retry-runner';
 import type { EventLogger } from './event-logger';
-import { selectBestWeapon, shouldAutoEquip } from './auto-equip';
-import type { WeaponCandidate } from './auto-equip';
+import { selectBestWeapon, shouldAutoEquip, selectBestArmor, shouldAutoEquipArmor } from './auto-equip';
+import type { WeaponCandidate, ArmorCandidate } from './auto-equip';
 import { resolveCombat, FIST_DAMAGE_MIN, FIST_DAMAGE_MAX } from './combat-resolver';
 import type { CombatResult } from './combat-resolver';
 
@@ -30,6 +30,7 @@ export interface PlayerState {
   hp: number;
   max_hp: number;
   equipped_weapon_id: number | null;
+  equipped_armor_id: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +59,7 @@ export interface ItemRow {
   disturbed: number; // 0 = false, 1 = true (SQLite boolean)
   inspection_description: string;
   room_blurb: string;
+  armor_value: number;
 }
 
 export interface MonsterRow {
@@ -118,6 +120,9 @@ export interface WorldDB {
 
   /** The currently equipped weapon item, or null if unarmed. */
   getEquippedWeapon(): ItemRow | null;
+
+  /** The currently equipped armor item, or null if unarmored. */
+  getEquippedArmor(): ItemRow | null;
 
   /**
    * Move an item from the current room to the player's inventory.
@@ -216,17 +221,18 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
     'SELECT id, room_id, name, inspection_description, room_blurb FROM scenery WHERE room_id = ? ORDER BY id ASC',
   );
   const stmtGetItemsInRoom = db.prepare(
-    'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb FROM items WHERE location = ? ORDER BY id ASC',
+    'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value FROM items WHERE location = ? ORDER BY id ASC',
   );
   const stmtGetInventory = db.prepare(
-    'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb FROM items WHERE location = ? ORDER BY id ASC',
+    'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value FROM items WHERE location = ? ORDER BY id ASC',
   );
   const stmtGetItem = db.prepare(
-    'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb FROM items WHERE id = ?',
+    'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value FROM items WHERE id = ?',
   );
   const stmtGetPlayerState = db.prepare('SELECT * FROM player_state WHERE id = 1');
   const stmtUpdateItemLocation = db.prepare('UPDATE items SET location = ?, disturbed = ? WHERE id = ?');
   const stmtUpdateEquippedWeapon = db.prepare('UPDATE player_state SET equipped_weapon_id = ? WHERE id = 1');
+  const stmtUpdateEquippedArmor = db.prepare('UPDATE player_state SET equipped_armor_id = ? WHERE id = 1');
   const stmtGetMonstersInRoom = db.prepare(
     'SELECT id, name, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged FROM monsters WHERE location = ? ORDER BY id ASC',
   );
@@ -242,7 +248,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
   const stmtRefillMonsterHp = db.prepare('UPDATE monsters SET hp = max_hp WHERE engaged = 1');
   const stmtClearAllEngaged = db.prepare('UPDATE monsters SET engaged = 0');
   const stmtGetDropForMonster = db.prepare(
-    'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb FROM items WHERE location = ?',
+    'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value FROM items WHERE location = ?',
   );
 
   // ── Startup: seed exits from frontmatter for the starting room ───────────
@@ -286,6 +292,13 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       return item ?? null;
     },
 
+    getEquippedArmor(): ItemRow | null {
+      const player = stmtGetPlayerState.get() as PlayerState;
+      if (player.equipped_armor_id == null) return null;
+      const item = stmtGetItem.get(player.equipped_armor_id) as ItemRow | undefined;
+      return item ?? null;
+    },
+
     takeItem(itemId: number, logger?: EventLogger): ItemRow {
       const item = stmtGetItem.get(itemId) as ItemRow;
 
@@ -303,21 +316,39 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
 
       // Auto-equip check
       const player = stmtGetPlayerState.get() as PlayerState;
-      const equippedId = player.equipped_weapon_id;
-      const currentWeapon: WeaponCandidate | null = equippedId
-        ? (stmtGetItem.get(equippedId) as ItemRow | undefined) ?? null
-        : null;
 
-      if (shouldAutoEquip(currentWeapon, item)) {
-        stmtUpdateEquippedWeapon.run(itemId);
-        // Log equipped weapon change
-        logger?.logStateMutate({
-          entity: 'player',
-          id: 1,
-          before: { equipped_weapon_id: equippedId ?? null },
-          after: { equipped_weapon_id: itemId },
-          reason: 'take_auto_equip',
-        });
+      if (item.type === 'armor') {
+        const equippedArmorId = player.equipped_armor_id;
+        const currentArmor: ArmorCandidate | null = equippedArmorId
+          ? (stmtGetItem.get(equippedArmorId) as ItemRow | undefined) ?? null
+          : null;
+
+        if (shouldAutoEquipArmor(currentArmor, item)) {
+          stmtUpdateEquippedArmor.run(itemId);
+          logger?.logStateMutate({
+            entity: 'player',
+            id: 1,
+            before: { equipped_armor_id: equippedArmorId ?? null },
+            after: { equipped_armor_id: itemId },
+            reason: 'take_auto_equip_armor',
+          });
+        }
+      } else {
+        const equippedId = player.equipped_weapon_id;
+        const currentWeapon: WeaponCandidate | null = equippedId
+          ? (stmtGetItem.get(equippedId) as ItemRow | undefined) ?? null
+          : null;
+
+        if (shouldAutoEquip(currentWeapon, item)) {
+          stmtUpdateEquippedWeapon.run(itemId);
+          logger?.logStateMutate({
+            entity: 'player',
+            id: 1,
+            before: { equipped_weapon_id: equippedId ?? null },
+            after: { equipped_weapon_id: itemId },
+            reason: 'take_auto_equip',
+          });
+        }
       }
 
       return { ...item, location: 'player_inventory', disturbed: 1 };
@@ -345,7 +376,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       if (player.equipped_weapon_id === itemId) {
         const remainingInventory = (
           stmtGetInventory.all('player_inventory') as ItemRow[]
-        ).filter((i) => i.id !== itemId);
+        ).filter((i) => i.id !== itemId && i.type === 'weapon');
 
         const candidates: WeaponCandidate[] = remainingInventory.map((i) => ({
           id: i.id,
@@ -356,13 +387,35 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         const newEquippedId = best ? best.id : null;
         stmtUpdateEquippedWeapon.run(newEquippedId);
 
-        // Log equipped weapon re-selection
         logger?.logStateMutate({
           entity: 'player',
           id: 1,
           before: { equipped_weapon_id: player.equipped_weapon_id },
           after: { equipped_weapon_id: newEquippedId },
           reason: 'drop_re_equip',
+        });
+      }
+
+      // If this was the equipped armor, re-run armor selection
+      if (player.equipped_armor_id === itemId) {
+        const remainingInventory = (
+          stmtGetInventory.all('player_inventory') as ItemRow[]
+        ).filter((i) => i.id !== itemId && i.type === 'armor');
+
+        const armorCandidates: ArmorCandidate[] = remainingInventory.map((i) => ({
+          id: i.id,
+          armor_value: i.armor_value,
+        }));
+        const bestArmor = selectBestArmor(armorCandidates);
+        const newArmorId = bestArmor ? bestArmor.id : null;
+        stmtUpdateEquippedArmor.run(newArmorId);
+
+        logger?.logStateMutate({
+          entity: 'player',
+          id: 1,
+          before: { equipped_armor_id: player.equipped_armor_id },
+          after: { equipped_armor_id: newArmorId },
+          reason: 'drop_re_equip_armor',
         });
       }
 
@@ -392,8 +445,14 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         }
       }
 
+      let playerArmorValue = 0;
+      if (player.equipped_armor_id != null) {
+        const armor = stmtGetItem.get(player.equipped_armor_id) as ItemRow | undefined;
+        if (armor) playerArmorValue = armor.armor_value;
+      }
+
       const combatResult = resolveCombat(
-        { hp: player.hp, max_hp: player.max_hp, damage_min: playerDmgMin, damage_max: playerDmgMax },
+        { hp: player.hp, max_hp: player.max_hp, damage_min: playerDmgMin, damage_max: playerDmgMax, armor_value: playerArmorValue },
         { id: monster.id, hp: monster.hp, max_hp: monster.max_hp, damage_min: monster.damage_min, damage_max: monster.damage_max },
       );
 
@@ -492,10 +551,18 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         return { monster_damage_dealt: 0, player_died: false, newPlayerHp: player.hp };
       }
 
-      // Each engaged monster gets a parting shot
+      // Look up armor for damage reduction
+      let playerArmorValue = 0;
+      if (player.equipped_armor_id != null) {
+        const armor = stmtGetItem.get(player.equipped_armor_id) as ItemRow | undefined;
+        if (armor) playerArmorValue = armor.armor_value;
+      }
+
+      // Each engaged monster gets a parting shot, reduced by armor
       let totalDamage = 0;
       for (const monster of activeEngaged) {
-        const dmg = Math.floor(Math.random() * (monster.damage_max - monster.damage_min + 1)) + monster.damage_min;
+        const rawDmg = Math.floor(Math.random() * (monster.damage_max - monster.damage_min + 1)) + monster.damage_min;
+        const dmg = Math.max(0, rawDmg - playerArmorValue);
         totalDamage += dmg;
       }
 
@@ -776,10 +843,10 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           }
         }
 
-        // Persist generated items
+        // Persist generated items (weapons)
         if (roomToCommit.items && roomToCommit.items.length > 0) {
           const stmtInsertItem = db.prepare(
-            'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           );
           for (const item of roomToCommit.items) {
             stmtInsertItem.run(
@@ -792,6 +859,28 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
               0,
               item.inspection_description,
               item.room_blurb,
+              0,
+            );
+          }
+        }
+
+        // Persist generated armor pieces
+        if (roomToCommit.armor && roomToCommit.armor.length > 0) {
+          const stmtInsertArmor = db.prepare(
+            'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          );
+          for (const piece of roomToCommit.armor) {
+            stmtInsertArmor.run(
+              piece.name,
+              piece.inspection_description,
+              `room:${newRoomId}`,
+              0,
+              0,
+              piece.type,
+              0,
+              piece.inspection_description,
+              piece.room_blurb,
+              piece.armor_value,
             );
           }
         }
@@ -802,7 +891,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
             'INSERT INTO monsters (name, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)',
           );
           const stmtInsertDrop = db.prepare(
-            'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           );
           for (const monster of roomToCommit.monsters) {
             const monsterResult = stmtInsertMonster.run(
@@ -828,6 +917,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
               0,
               monster.drop.inspection_description,
               monster.drop.room_blurb,
+              0,
             );
           }
         }
@@ -1027,7 +1117,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
 
               if (roomToCommit.items && roomToCommit.items.length > 0) {
                 const stmtInsertItem = db.prepare(
-                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 );
                 for (const item of roomToCommit.items) {
                   stmtInsertItem.run(
@@ -1040,6 +1130,27 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
                     0,
                     item.inspection_description,
                     item.room_blurb,
+                    0,
+                  );
+                }
+              }
+
+              if (roomToCommit.armor && roomToCommit.armor.length > 0) {
+                const stmtInsertArmor = db.prepare(
+                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                );
+                for (const piece of roomToCommit.armor) {
+                  stmtInsertArmor.run(
+                    piece.name,
+                    piece.inspection_description,
+                    `room:${newRoomId}`,
+                    0,
+                    0,
+                    piece.type,
+                    0,
+                    piece.inspection_description,
+                    piece.room_blurb,
+                    piece.armor_value,
                   );
                 }
               }
@@ -1049,7 +1160,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
                   'INSERT INTO monsters (name, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)',
                 );
                 const stmtInsertDrop = db.prepare(
-                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 );
                 for (const monster of roomToCommit.monsters) {
                   const monsterResult = stmtInsertMonster.run(
@@ -1073,6 +1184,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
                     0,
                     monster.drop.inspection_description,
                     monster.drop.room_blurb,
+                    0,
                   );
                 }
               }
@@ -1137,7 +1249,7 @@ function seedIfEmpty(db: Database.Database, worldFile: WorldFile): void {
   // Insert any frontmatter-authored items
   if (sr.items && sr.items.length > 0) {
     const insertItem = db.prepare(
-      'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     );
     for (const item of sr.items) {
       insertItem.run(
@@ -1150,6 +1262,7 @@ function seedIfEmpty(db: Database.Database, worldFile: WorldFile): void {
         0,
         item.inspection_description,
         item.room_blurb,
+        0,
       );
     }
   }
@@ -1175,6 +1288,6 @@ function seedIfEmpty(db: Database.Database, worldFile: WorldFile): void {
 
   // Insert initial player state
   db.prepare(
-    'INSERT INTO player_state (id, current_room_id, hp, max_hp, equipped_weapon_id) VALUES (1, ?, 20, 20, NULL)',
+    'INSERT INTO player_state (id, current_room_id, hp, max_hp, equipped_weapon_id, equipped_armor_id) VALUES (1, ?, 20, 20, NULL, NULL)',
   ).run(roomId);
 }

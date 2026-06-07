@@ -35,6 +35,7 @@ const modelConfigStatus = document.getElementById('model-config-status') as HTML
 // Game view
 const hudHp = document.getElementById('hud-hp') as HTMLSpanElement;
 const hudWeapon = document.getElementById('hud-weapon') as HTMLSpanElement;
+const hudArmor = document.getElementById('hud-armor') as HTMLSpanElement;
 const hudRoom = document.getElementById('hud-room') as HTMLSpanElement;
 const scrollback = document.getElementById('scrollback') as HTMLDivElement;
 const input = document.getElementById('input') as HTMLInputElement;
@@ -66,6 +67,11 @@ function updateHud(hud: HudData): void {
     hudWeapon.textContent = `${hud.weapon.name} (${hud.weapon.damage_min}–${hud.weapon.damage_max})`;
   } else {
     hudWeapon.textContent = 'fists (1–2)';
+  }
+  if (hud.armor) {
+    hudArmor.textContent = `${hud.armor.name} (${hud.armor.armor_value})`;
+  } else {
+    hudArmor.textContent = 'none';
   }
   hudRoom.textContent = hud.room_name;
 }

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 
-export const EXPECTED_SCHEMA_VERSION = 5;
+export const EXPECTED_SCHEMA_VERSION = 6;
 
 const V1_SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -127,6 +127,16 @@ ALTER TABLE monsters ADD COLUMN room_blurb TEXT NOT NULL DEFAULT '';
 ALTER TABLE monsters ADD COLUMN engaged INTEGER NOT NULL DEFAULT 0;
 `;
 
+/**
+ * V6 adds armor support:
+ * - items.armor_value: flat damage reduction (0 for weapons)
+ * - player_state.equipped_armor_id: the currently equipped armor piece
+ */
+const V6_ADDITIONS = `
+ALTER TABLE items ADD COLUMN armor_value INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE player_state ADD COLUMN equipped_armor_id INTEGER REFERENCES items(id);
+`;
+
 export function runMigrations(db: Database.Database): void {
   // Check if schema_version exists
   const tableExists = db
@@ -147,42 +157,53 @@ export function runMigrations(db: Database.Database): void {
 
     if (row && row.version === EXPECTED_SCHEMA_VERSION) {
       // Already at latest — apply all CREATE TABLE IF NOT EXISTS idempotently
-      // (ALTER TABLE IF NOT EXISTS is not supported; skip V3/V4/V5 re-runs since columns already exist)
+      // (ALTER TABLE IF NOT EXISTS is not supported; skip V3–V6 re-runs since columns already exist)
       db.exec(V1_SCHEMA);
       db.exec(V2_ADDITIONS);
       return;
     }
 
-    // V4 DB upgrading to V5
-    if (row && row.version === 4) {
-      applyV5Safely(db);
+    // V5 DB upgrading to V6
+    if (row && row.version === 5) {
+      applyV6Safely(db);
       db.prepare('UPDATE schema_version SET version = ?').run(EXPECTED_SCHEMA_VERSION);
       return;
     }
 
-    // V3 DB upgrading to V4+V5
+    // V4 DB upgrading to V5+V6
+    if (row && row.version === 4) {
+      applyV5Safely(db);
+      applyV6Safely(db);
+      db.prepare('UPDATE schema_version SET version = ?').run(EXPECTED_SCHEMA_VERSION);
+      return;
+    }
+
+    // V3 DB upgrading to V4+V5+V6
     if (row && row.version === 3) {
       applyV4Safely(db);
       applyV5Safely(db);
+      applyV6Safely(db);
       db.prepare('UPDATE schema_version SET version = ?').run(EXPECTED_SCHEMA_VERSION);
       return;
     }
 
-    // V2 DB upgrading to V3+V4+V5
+    // V2 DB upgrading to V3+V4+V5+V6
     if (row && row.version === 2) {
       applyV3Safely(db);
       applyV4Safely(db);
       applyV5Safely(db);
+      applyV6Safely(db);
       db.prepare('UPDATE schema_version SET version = ?').run(EXPECTED_SCHEMA_VERSION);
       return;
     }
 
-    // V1 DB upgrading to V2+V3+V4+V5
+    // V1 DB upgrading to V2+V3+V4+V5+V6
     if (row && row.version === 1) {
       db.exec(V2_ADDITIONS);
       applyV3Safely(db);
       applyV4Safely(db);
       applyV5Safely(db);
+      applyV6Safely(db);
       db.prepare('UPDATE schema_version SET version = ?').run(EXPECTED_SCHEMA_VERSION);
       return;
     }
@@ -194,6 +215,7 @@ export function runMigrations(db: Database.Database): void {
   applyV3Safely(db);
   applyV4Safely(db);
   applyV5Safely(db);
+  applyV6Safely(db);
 
   // Seed schema_version if not set
   const existing = db.prepare('SELECT version FROM schema_version').get();
@@ -230,4 +252,8 @@ function applyV4Safely(db: Database.Database): void {
 
 function applyV5Safely(db: Database.Database): void {
   applyAltersSafely(db, V5_ADDITIONS);
+}
+
+function applyV6Safely(db: Database.Database): void {
+  applyAltersSafely(db, V6_ADDITIONS);
 }

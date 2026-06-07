@@ -239,6 +239,7 @@ describe('buildGenerationPrompt — monster bounds', () => {
           hp_min: 8, hp_max: 15,
           damage_min: 2, damage_max: 4,
           drop_damage_min: 1, drop_damage_max: 2,
+          armor_value_min: 1, armor_value_max: 1,
         },
       },
     );
@@ -277,6 +278,7 @@ function makeRoomJson(overrides: Partial<{
     exits: overrides.exits ?? ['north'],
     scenery: [],
     items: [],
+    armor: [],
     monsters: overrides.monsters ?? [],
   };
   return JSON.stringify(room);
@@ -286,7 +288,8 @@ const BOUNDS = {
   hp_min: 8, hp_max: 15,
   damage_min: 2, damage_max: 4,
   drop_damage_min: 1, drop_damage_max: 2,
-};
+          armor_value_min: 1, armor_value_max: 1,
+        };
 
 const VALID_MONSTER = {
   name: 'Goblin',
