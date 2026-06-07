@@ -23,6 +23,7 @@ const btnCreateWorld = document.getElementById('btn-create-world') as HTMLButton
 // Ollama setup
 const ollamaStatusMsg = document.getElementById('ollama-status-msg') as HTMLParagraphElement;
 const ollamaProgressMsg = document.getElementById('ollama-progress-msg') as HTMLParagraphElement;
+const ollamaFlavorMsg = document.getElementById('ollama-flavor-msg') as HTMLParagraphElement;
 const ollamaSetupButtons = document.getElementById('ollama-setup-buttons') as HTMLDivElement;
 const inputHeavyModel = document.getElementById('input-heavy-model') as HTMLInputElement;
 const inputLightModel = document.getElementById('input-light-model') as HTMLInputElement;
@@ -126,16 +127,86 @@ function makeButton(label: string, className: string, onClick: () => void): HTML
   return btn;
 }
 
+const GENERATE_FLAVORS = [
+  'consulting the oracle...',
+  'the narrator reaches for a quill...',
+  'rolling for description...',
+  'weaving the narrative...',
+  'the storyteller ponders...',
+  'divining the next passage...',
+  'consulting ancient tomes...',
+  'the oracle dreams...',
+  'spinning the threads of fate...',
+  'the narrator deliberates...',
+  'communing with the beyond...',
+  'inscribing the world...',
+];
+
+let generateFlavorIndex = 0;
+let generateFlavorInterval: ReturnType<typeof setInterval> | null = null;
+
+function startGenerateFlavors(): void {
+  generateFlavorIndex = Math.floor(Math.random() * GENERATE_FLAVORS.length);
+  spinner.textContent = GENERATE_FLAVORS[generateFlavorIndex];
+  generateFlavorInterval = setInterval(() => {
+    generateFlavorIndex = (generateFlavorIndex + 1) % GENERATE_FLAVORS.length;
+    spinner.textContent = GENERATE_FLAVORS[generateFlavorIndex];
+  }, 2500);
+}
+
+function stopGenerateFlavors(): void {
+  if (generateFlavorInterval !== null) {
+    clearInterval(generateFlavorInterval);
+    generateFlavorInterval = null;
+  }
+  spinner.textContent = '';
+}
+
+const PULL_FLAVORS = [
+  'Negotiating with the void...',
+  'The weights are... substantial.',
+  'Unpacking aeons of compressed thought...',
+  'Teaching the narrator what a sword looks like...',
+  'Almost definitely not sentient. Probably.',
+  'Downloading opinions on narrative pacing...',
+  'Sharpening the neurons...',
+  'The oracle stirs in its digital lair...',
+  'Feeding the mind its training rations...',
+  'Convincing gigabytes to cooperate...',
+  'Coaxing ancient knowledge into RAM...',
+  'The mind dreams of probability distributions...',
+];
+
+let flavorInterval: ReturnType<typeof setInterval> | null = null;
+
+function startFlavorCycle(): void {
+  let i = 0;
+  ollamaFlavorMsg.textContent = PULL_FLAVORS[i];
+  flavorInterval = setInterval(() => {
+    i = (i + 1) % PULL_FLAVORS.length;
+    ollamaFlavorMsg.textContent = PULL_FLAVORS[i];
+  }, 3500);
+}
+
+function stopFlavorCycle(): void {
+  if (flavorInterval !== null) {
+    clearInterval(flavorInterval);
+    flavorInterval = null;
+  }
+  ollamaFlavorMsg.textContent = '';
+}
+
 async function runSetupCheck(): Promise<void> {
   showSetup();
-  ollamaStatusMsg.textContent = 'Checking Ollama...';
+  ollamaStatusMsg.textContent = 'Rousing the oracles...';
   ollamaProgressMsg.textContent = '';
+  ollamaFlavorMsg.textContent = '';
   ollamaSetupButtons.innerHTML = '';
 
   const result = await window.electronAPI.checkOllama();
 
   if (result.ok) {
-    ollamaStatusMsg.textContent = '✓ Models ready';
+    ollamaStatusMsg.textContent = '✓ The oracles are awake.';
     ollamaProgressMsg.textContent = '';
     ollamaSetupButtons.innerHTML = '';
     // Brief pause so the user can see the success message
@@ -153,54 +224,56 @@ async function runSetupCheck(): Promise<void> {
   // Failure path
   if (result.phase === 'reachability') {
     ollamaStatusMsg.textContent =
-      'Cannot reach Ollama at http://localhost:11434.\n\n' +
-      'Install Ollama from https://ollama.com and start it, then click Retry.';
+      'The oracles do not answer. Nothing stirs at http://localhost:11434.\n\n' +
+      'Install Ollama from https://ollama.com and wake it, then try again.';
     setSetupButtons(
-      makeButton('Retry', 'primary', () => runSetupCheck()),
+      makeButton('Try Again', 'primary', () => runSetupCheck()),
     );
     return;
   }
 
   if (result.phase === 'models') {
     ollamaStatusMsg.textContent =
-      `${result.error}\n\nClick "Install Models" to pull the missing models.`;
+      `${result.error}\n\nThe minds are not yet formed. Summon them to continue.`;
     setSetupButtons(
-      makeButton('Install Models', 'primary', () => runPullModels()),
-      makeButton('Retry', '', () => runSetupCheck()),
+      makeButton('Summon Models', 'primary', () => runPullModels()),
+      makeButton('Try Again', '', () => runSetupCheck()),
     );
     return;
   }
 
   if (result.phase === 'smoke_test') {
     ollamaStatusMsg.textContent =
-      `${result.error}\n\nThe model is installed but did not respond correctly. Try restarting Ollama and clicking Retry.`;
+      `${result.error}\n\nThe mind woke but gave no answer. Try restarting Ollama and trying again.`;
     setSetupButtons(
-      makeButton('Retry', 'primary', () => runSetupCheck()),
+      makeButton('Try Again', 'primary', () => runSetupCheck()),
     );
     return;
   }
 
   ollamaStatusMsg.textContent = result.error;
   setSetupButtons(
-    makeButton('Retry', 'primary', () => runSetupCheck()),
+    makeButton('Try Again', 'primary', () => runSetupCheck()),
   );
 }
 
 async function runPullModels(): Promise<void> {
-  ollamaStatusMsg.textContent = 'Pulling models... (this may take a while)';
+  ollamaStatusMsg.textContent = 'Summoning minds from the digital deep...\n(this may take a while)';
   ollamaProgressMsg.textContent = '';
   ollamaSetupButtons.innerHTML = '';
+  startFlavorCycle();
 
   window.electronAPI.onPullProgress((status) => {
     ollamaProgressMsg.textContent = status;
   });
 
   const result = await window.electronAPI.pullModels();
+  stopFlavorCycle();
 
   if (!result.ok) {
-    ollamaStatusMsg.textContent = `Pull failed: ${result.error}`;
+    ollamaStatusMsg.textContent = `The summoning failed: ${result.error}`;
     setSetupButtons(
-      makeButton('Retry', 'primary', () => runSetupCheck()),
+      makeButton('Try Again', 'primary', () => runSetupCheck()),
     );
     return;
   }
@@ -218,13 +291,13 @@ async function saveModelConfig(): Promise<void> {
   const lightModel = inputLightModel.value.trim();
   if (!heavyModel || !lightModel) return;
 
-  modelConfigStatus.textContent = 'Saving...';
+  modelConfigStatus.textContent = 'Binding the new minds...';
   const result = await window.electronAPI.setConfig({ heavyModel, lightModel });
   if (!result.ok) {
     modelConfigStatus.textContent = `Error: ${result.error}`;
     return;
   }
-  modelConfigStatus.textContent = 'Saved. Re-checking models...';
+  modelConfigStatus.textContent = 'Bound. Re-rousing the oracles...';
   runSetupCheck();
 }
 
@@ -407,6 +480,7 @@ form.addEventListener('submit', async (e) => {
   input.value = '';
   input.disabled = true;
   spinner.classList.add('active');
+  startGenerateFlavors();
 
   const response = await window.electronAPI.submitInput(text);
   for (const line of response.narrative) {
@@ -414,6 +488,7 @@ form.addEventListener('submit', async (e) => {
   }
   if (response.hud) updateHud(response.hud);
 
+  stopGenerateFlavors();
   spinner.classList.remove('active');
   input.disabled = false;
   input.focus();

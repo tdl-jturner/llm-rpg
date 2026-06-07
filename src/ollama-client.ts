@@ -16,7 +16,7 @@ const client = new Ollama({ host: BASE_URL });
  */
 export async function isOllamaReachable(): Promise<boolean> {
   try {
-    const res = await fetch(BASE_URL);
+    const res = await fetch(BASE_URL, { signal: AbortSignal.timeout(5000) });
     return res.ok;
   } catch {
     return false;
