@@ -286,12 +286,12 @@ export function createRealLLM(
       ok = true;
     } catch (err) {
       const ms = Date.now() - start;
-      logError(`LLM call: ${modelLabel} → failed (${ms}ms)`);
+      logError(`LLM call: ${modelLabel} -> failed (${ms}ms)`);
       logger?.logLlmCall({ model: modelTag, prompt, response: '', ok: false });
       throw err;
     }
     const ms = Date.now() - start;
-    logInfo(`LLM call: ${modelLabel} → ok (${ms}ms)`);
+    logInfo(`LLM call: ${modelLabel} -> ok (${ms}ms)`);
     logger?.logLlmCall({ model: modelTag, prompt, response, ok });
     return response;
   };
