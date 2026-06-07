@@ -34,6 +34,7 @@ body {
 
 #world-picker {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -257,6 +258,7 @@ button.danger:hover {
 
 #game-view {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   display: none; /* hidden until a world is loaded */
