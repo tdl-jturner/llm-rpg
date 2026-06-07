@@ -13,6 +13,8 @@ import { isOllamaReachable, listPulledModels, pullModel, callModel as ollamaCall
 import { runOllamaSetup } from './ollama-setup';
 import { callModel as googleCallModel } from './google-ai-studio-client';
 import { runGoogleAIStudioSetup } from './google-ai-studio-setup';
+import { callModel as openRouterCallModel, listFreeModels as listOpenRouterFreeModels } from './openrouter-client';
+import { runOpenRouterSetup } from './openrouter-setup';
 import type {
   ListWorldsResponse,
   WorldSummary,
@@ -34,14 +36,19 @@ let appConfig: AppConfig = {
   provider: 'ollama',
   heavyModel: 'qwen3:8b',
   lightModel: 'gemma3:1b',
-  googleApiKey: '',
+  apiKey: '',
 };
 
 function getCallModelFn() {
   if (appConfig.provider === 'google-ai-studio') {
-    const key = appConfig.googleApiKey;
+    const key = appConfig.apiKey;
     return (tag: string, prompt: string, jsonMode: boolean) =>
       googleCallModel(key, tag, prompt, jsonMode);
+  }
+  if (appConfig.provider === 'openrouter') {
+    const key = appConfig.apiKey;
+    return (tag: string, prompt: string, jsonMode: boolean) =>
+      openRouterCallModel(key, tag, prompt, jsonMode);
   }
   return ollamaCallModel;
 }
@@ -382,6 +389,9 @@ function registerIpcHandlers(): void {
     if (appConfig.provider === 'google-ai-studio') {
       return runGoogleAIStudioSetup(appConfig);
     }
+    if (appConfig.provider === 'openrouter') {
+      return runOpenRouterSetup(appConfig);
+    }
     return runOllamaSetup(appConfig, {
       isReachable: isOllamaReachable,
       listModels: listPulledModels,
@@ -402,9 +412,14 @@ function registerIpcHandlers(): void {
     }
   });
 
+  // ── OpenRouter: list free models ─────────────────────────────────────────
+  ipcMain.handle('list-openrouter-models', async (): Promise<string[]> => {
+    return listOpenRouterFreeModels(appConfig.apiKey);
+  });
+
   // ── Ollama: pull missing models ───────────────────────────────────────────
   ipcMain.handle('pull-models', async (event): Promise<ActionResult> => {
-    if (appConfig.provider === 'google-ai-studio') {
+    if (appConfig.provider === 'google-ai-studio' || appConfig.provider === 'openrouter') {
       return { ok: true };
     }
     let pulledModels: string[];

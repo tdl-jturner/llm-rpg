@@ -28,13 +28,13 @@ describe('loadConfig', () => {
     expect(config.provider).toBe('ollama');
     expect(config.heavyModel).toBe('qwen3.5:9b');
     expect(config.lightModel).toBe('gemma4:e2b');
-    expect(config.googleApiKey).toBe('');
+    expect(config.apiKey).toBe('');
 
     const written = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf-8'));
     expect(written.provider).toBe('ollama');
     expect(written.heavyModel).toBe('qwen3.5:9b');
     expect(written.lightModel).toBe('gemma4:e2b');
-    expect(written.googleApiKey).toBe('');
+    expect(written.apiKey).toBe('');
   });
 
   it('returns existing config when file is present', () => {
@@ -44,7 +44,7 @@ describe('loadConfig', () => {
         provider: 'google-ai-studio',
         heavyModel: 'gemini-2.5-flash',
         lightModel: 'gemini-2.5-flash',
-        googleApiKey: 'AIzaTest',
+        apiKey: 'AIzaTest',
       }),
       'utf-8',
     );
@@ -52,7 +52,7 @@ describe('loadConfig', () => {
     expect(config.provider).toBe('google-ai-studio');
     expect(config.heavyModel).toBe('gemini-2.5-flash');
     expect(config.lightModel).toBe('gemini-2.5-flash');
-    expect(config.googleApiKey).toBe('AIzaTest');
+    expect(config.apiKey).toBe('AIzaTest');
   });
 
   it('merges missing keys with defaults when partial config is on disk', () => {
@@ -65,7 +65,7 @@ describe('loadConfig', () => {
     expect(config.heavyModel).toBe('partial-heavy:13b');
     expect(config.lightModel).toBe('gemma4:e2b'); // filled from defaults
     expect(config.provider).toBe('ollama'); // filled from defaults
-    expect(config.googleApiKey).toBe(''); // filled from defaults
+    expect(config.apiKey).toBe(''); // filled from defaults
   });
 
   it('recovers from corrupt JSON by returning defaults', () => {
@@ -74,7 +74,7 @@ describe('loadConfig', () => {
     expect(config.provider).toBe('ollama');
     expect(config.heavyModel).toBe('qwen3.5:9b');
     expect(config.lightModel).toBe('gemma4:e2b');
-    expect(config.googleApiKey).toBe('');
+    expect(config.apiKey).toBe('');
   });
 
   it('writes back the merged config so the file stays up to date', () => {
@@ -87,19 +87,19 @@ describe('loadConfig', () => {
     const written = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf-8'));
     expect(written.lightModel).toBe('gemma4:e2b');
     expect(written.provider).toBe('ollama');
-    expect(written.googleApiKey).toBe('');
+    expect(written.apiKey).toBe('');
   });
 });
 
 describe('saveConfig', () => {
   it('writes the given config to config.json', () => {
-    const config = { provider: 'ollama' as const, heavyModel: 'llama3:70b', lightModel: 'phi3:mini', googleApiKey: '' };
+    const config = { provider: 'ollama' as const, heavyModel: 'llama3:70b', lightModel: 'phi3:mini', apiKey: '' };
     saveConfig(tmpDir, config);
     const written = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf-8'));
     expect(written.provider).toBe('ollama');
     expect(written.heavyModel).toBe('llama3:70b');
     expect(written.lightModel).toBe('phi3:mini');
-    expect(written.googleApiKey).toBe('');
+    expect(written.apiKey).toBe('');
   });
 
   it('saves google-ai-studio config with API key', () => {
@@ -107,21 +107,21 @@ describe('saveConfig', () => {
       provider: 'google-ai-studio' as const,
       heavyModel: 'gemini-2.5-flash',
       lightModel: 'gemini-2.5-flash',
-      googleApiKey: 'AIzaSyTest',
+      apiKey: 'AIzaSyTest',
     };
     saveConfig(tmpDir, config);
     const written = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf-8'));
     expect(written.provider).toBe('google-ai-studio');
-    expect(written.googleApiKey).toBe('AIzaSyTest');
+    expect(written.apiKey).toBe('AIzaSyTest');
   });
 
   it('overwrites an existing config.json', () => {
     fs.writeFileSync(
       path.join(tmpDir, 'config.json'),
-      JSON.stringify({ provider: 'ollama', heavyModel: 'old-heavy:7b', lightModel: 'old-light:1b', googleApiKey: '' }),
+      JSON.stringify({ provider: 'ollama', heavyModel: 'old-heavy:7b', lightModel: 'old-light:1b', apiKey: '' }),
       'utf-8',
     );
-    saveConfig(tmpDir, { provider: 'ollama', heavyModel: 'new-heavy:13b', lightModel: 'new-light:3b', googleApiKey: '' });
+    saveConfig(tmpDir, { provider: 'ollama', heavyModel: 'new-heavy:13b', lightModel: 'new-light:3b', apiKey: '' });
     const written = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf-8'));
     expect(written.heavyModel).toBe('new-heavy:13b');
     expect(written.lightModel).toBe('new-light:3b');
@@ -129,16 +129,16 @@ describe('saveConfig', () => {
 
   it('creates parent directory if it does not exist', () => {
     const nested = path.join(tmpDir, 'deep', 'nested');
-    saveConfig(nested, { provider: 'ollama', heavyModel: 'a:1b', lightModel: 'b:1b', googleApiKey: '' });
+    saveConfig(nested, { provider: 'ollama', heavyModel: 'a:1b', lightModel: 'b:1b', apiKey: '' });
     expect(fs.existsSync(path.join(nested, 'config.json'))).toBe(true);
   });
 
   it('loadConfig reads back what saveConfig wrote', () => {
-    const config = { provider: 'google-ai-studio' as const, heavyModel: 'gemini-2.5-flash', lightModel: 'gemini-2.5-flash', googleApiKey: 'AIzaRound' };
+    const config = { provider: 'google-ai-studio' as const, heavyModel: 'gemini-2.5-flash', lightModel: 'gemini-2.5-flash', apiKey: 'AIzaRound' };
     saveConfig(tmpDir, config);
     const loaded = loadConfig(tmpDir);
     expect(loaded.provider).toBe('google-ai-studio');
     expect(loaded.heavyModel).toBe('gemini-2.5-flash');
-    expect(loaded.googleApiKey).toBe('AIzaRound');
+    expect(loaded.apiKey).toBe('AIzaRound');
   });
 });

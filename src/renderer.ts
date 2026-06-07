@@ -115,6 +115,10 @@ async function populateModelSelects(provider: string, heavyModel: string, lightM
   if (provider === 'google-ai-studio') {
     populateSelect(inputHeavyModel, GOOGLE_MODELS, heavyModel);
     populateSelect(inputLightModel, GOOGLE_MODELS, lightModel);
+  } else if (provider === 'openrouter') {
+    const models = await window.electronAPI.listOpenRouterModels();
+    populateSelect(inputHeavyModel, models, heavyModel);
+    populateSelect(inputLightModel, models, lightModel);
   } else {
     const models = await window.electronAPI.listOllamaModels();
     populateSelect(inputHeavyModel, models, heavyModel);
@@ -131,8 +135,8 @@ async function showSetup(): Promise<void> {
   try {
     const config = await window.electronAPI.getConfig();
     inputProvider.value = config.provider;
-    inputApiKey.value = config.googleApiKey;
-    apiKeyField.style.display = config.provider === 'google-ai-studio' ? 'flex' : 'none';
+    inputApiKey.value = config.apiKey;
+    apiKeyField.style.display = config.provider !== 'ollama' ? 'flex' : 'none';
     await populateModelSelects(config.provider, config.heavyModel, config.lightModel);
     modelConfigStatus.textContent = '';
   } catch {
@@ -352,11 +356,11 @@ async function saveModelConfig(): Promise<void> {
   const provider = inputProvider.value as 'ollama' | 'google-ai-studio';
   const heavyModel = inputHeavyModel.value.trim();
   const lightModel = inputLightModel.value.trim();
-  const googleApiKey = inputApiKey.value.trim();
+  const apiKey = inputApiKey.value.trim();
   if (!heavyModel || !lightModel) return;
 
   modelConfigStatus.textContent = 'Binding the new minds...';
-  const result = await window.electronAPI.setConfig({ provider, heavyModel, lightModel, googleApiKey });
+  const result = await window.electronAPI.setConfig({ provider, heavyModel, lightModel, apiKey });
   if (!result.ok) {
     modelConfigStatus.textContent = `Error: ${result.error}`;
     return;
@@ -368,10 +372,10 @@ async function saveModelConfig(): Promise<void> {
 }
 
 inputProvider.addEventListener('change', async () => {
-  const isGoogle = inputProvider.value === 'google-ai-studio';
-  apiKeyField.style.display = isGoogle ? 'flex' : 'none';
-  const defaultModel = isGoogle ? 'gemini-2.5-flash' : '';
-  await populateModelSelects(inputProvider.value, defaultModel, defaultModel);
+  const provider = inputProvider.value;
+  apiKeyField.style.display = provider !== 'ollama' ? 'flex' : 'none';
+  const defaultModel = provider === 'google-ai-studio' ? 'gemini-2.5-flash' : '';
+  await populateModelSelects(provider, defaultModel, defaultModel);
   saveModelConfig();
 });
 

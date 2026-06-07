@@ -1,34 +1,39 @@
 // ---------------------------------------------------------------------------
-// GoogleAIStudioSetup
+// OpenRouterSetup
 //
-// Startup check for the Google AI Studio provider:
+// Startup check for the OpenRouter provider:
 //   1. Verify an API key is configured
 //   2. Confirm the key is valid by listing models (cheap, no token cost)
 // ---------------------------------------------------------------------------
 
-import { GoogleGenAI } from '@google/genai';
 import type { AppConfig } from './app-config';
 
-export type GoogleAIStudioSetupResult =
+export type OpenRouterSetupResult =
   | { ok: true }
   | { ok: false; error: string; phase: 'auth' };
 
-export async function runGoogleAIStudioSetup(
+export async function runOpenRouterSetup(
   config: AppConfig,
-): Promise<GoogleAIStudioSetupResult> {
+): Promise<OpenRouterSetupResult> {
   if (!config.apiKey) {
     return {
       ok: false,
-      error: 'No binding seal found. Inscribe your Google AI Studio API key in the Chosen Minds section below.',
+      error: 'No binding seal found. Inscribe your OpenRouter API key in the Chosen Minds section below.',
       phase: 'auth',
     };
   }
 
-  const ai = new GoogleGenAI({ apiKey: config.apiKey });
   try {
-    const pager = await ai.models.list();
-    // Consume the first result to confirm the call succeeded
-    for await (const _ of pager) { break; }
+    const res = await fetch('https://openrouter.ai/api/v1/models', {
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+    });
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: `The oracle rejects your seal — HTTP ${res.status}`,
+        phase: 'auth',
+      };
+    }
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

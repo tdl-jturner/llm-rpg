@@ -10,17 +10,17 @@ import fs from 'fs';
 import path from 'path';
 
 export interface AppConfig {
-  provider: 'ollama' | 'google-ai-studio';
+  provider: 'ollama' | 'google-ai-studio' | 'openrouter';
   heavyModel: string;
   lightModel: string;
-  googleApiKey: string;
+  apiKey: string;
 }
 
 const DEFAULTS: AppConfig = {
   provider: 'ollama',
   heavyModel: 'qwen3.5:9b',
   lightModel: 'gemma4:e2b',
-  googleApiKey: '',
+  apiKey: '',
 };
 
 /**
@@ -47,7 +47,7 @@ export function loadConfig(userDataPath: string): AppConfig {
     provider: raw.provider ?? DEFAULTS.provider,
     heavyModel: raw.heavyModel ?? DEFAULTS.heavyModel,
     lightModel: raw.lightModel ?? DEFAULTS.lightModel,
-    googleApiKey: raw.googleApiKey ?? DEFAULTS.googleApiKey,
+    apiKey: raw.apiKey ?? DEFAULTS.apiKey,
   };
 
   // Write back so the file always reflects the merged result

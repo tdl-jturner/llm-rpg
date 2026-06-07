@@ -65,10 +65,10 @@ export type ActionResult =
 // ---------------------------------------------------------------------------
 
 export interface AppConfig {
-  provider: 'ollama' | 'google-ai-studio';
+  provider: 'ollama' | 'google-ai-studio' | 'openrouter';
   heavyModel: string;
   lightModel: string;
-  googleApiKey: string;
+  apiKey: string;
 }
 
 /**
@@ -101,6 +101,7 @@ export interface ElectronAPI {
   checkOllama: () => Promise<OllamaCheckResult>;
   pullModels: () => Promise<ActionResult>;
   listOllamaModels: () => Promise<string[]>;
+  listOpenRouterModels: () => Promise<string[]>;
   getConfig: () => Promise<AppConfig>;
   setConfig: (config: AppConfig) => Promise<ActionResult>;
   onPullProgress: (callback: (status: string) => void) => void;

@@ -11,7 +11,7 @@ const CONFIG: AppConfig = {
   provider: 'ollama',
   heavyModel: 'heavy:7b',
   lightModel: 'light:1b',
-  googleApiKey: '',
+  apiKey: '',
 };
 
 function makeDeps(overrides: Partial<OllamaSetupDeps> = {}): OllamaSetupDeps {
