@@ -99,5 +99,6 @@ export interface ElectronAPI {
   checkOllama: () => Promise<OllamaCheckResult>;
   pullModels: () => Promise<ActionResult>;
   getConfig: () => Promise<AppConfig>;
+  setConfig: (config: AppConfig) => Promise<ActionResult>;
   onPullProgress: (callback: (status: string) => void) => void;
 }

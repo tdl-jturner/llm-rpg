@@ -41,6 +41,9 @@ const api: ElectronAPI = {
   getConfig: (): Promise<AppConfig> =>
     ipcRenderer.invoke('get-config'),
 
+  setConfig: (config: AppConfig): Promise<ActionResult> =>
+    ipcRenderer.invoke('set-config', config),
+
   onPullProgress: (callback: (status: string) => void): void => {
     ipcRenderer.on('pull-progress', (_event, status: string) => callback(status));
   },

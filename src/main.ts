@@ -8,7 +8,7 @@ import { loadWorldFile } from './world-file-loader';
 import { createRealLLM } from './room-generator';
 import { EventLogger } from './event-logger';
 import { getUnknownRefusalKeys } from './refusal-bank';
-import { loadConfig } from './app-config';
+import { loadConfig, saveConfig } from './app-config';
 import { isOllamaReachable, listPulledModels, pullModel, callModel } from './ollama-client';
 import { runOllamaSetup } from './ollama-setup';
 import type {
@@ -354,6 +354,17 @@ function registerIpcHandlers(): void {
   // ── Ollama: get config ────────────────────────────────────────────────────
   ipcMain.handle('get-config', (): AppConfig => {
     return appConfig;
+  });
+
+  // ── Ollama: set config ────────────────────────────────────────────────────
+  ipcMain.handle('set-config', (_event, newConfig: AppConfig): ActionResult => {
+    try {
+      saveConfig(app.getPath('userData'), newConfig);
+      appConfig = newConfig;
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: `Could not save config: ${e instanceof Error ? e.message : e}` };
+    }
   });
 
   // ── Ollama: check reachability + models ──────────────────────────────────

@@ -54,3 +54,13 @@ export function loadConfig(userDataPath: string): AppConfig {
 
   return merged;
 }
+
+/**
+ * Save the given config to `<userDataPath>/config.json`.
+ * Creates parent directories if they don't exist.
+ */
+export function saveConfig(userDataPath: string, config: AppConfig): void {
+  const configPath = path.join(userDataPath, 'config.json');
+  fs.mkdirSync(userDataPath, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+}

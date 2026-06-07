@@ -169,6 +169,68 @@
         justify-content: center;
       }
 
+      #model-config {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 8px;
+        width: 100%;
+        max-width: 480px;
+      }
+
+      #model-config details {
+        border: 1px solid var(--color-border);
+        padding: 10px 14px;
+      }
+
+      #model-config summary {
+        cursor: pointer;
+        color: var(--color-system-msg);
+        font-size: 12px;
+        letter-spacing: 1px;
+        user-select: none;
+      }
+
+      #model-config summary:hover {
+        color: var(--color-narrative);
+      }
+
+      .model-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 10px;
+      }
+
+      .model-field label {
+        font-size: 11px;
+        color: var(--color-system-msg);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+
+      .model-field input[type="text"] {
+        background: #111;
+        border: 1px solid #444;
+        color: var(--color-narrative);
+        font-family: inherit;
+        font-size: 13px;
+        padding: 4px 8px;
+        width: 100%;
+        outline: none;
+      }
+
+      .model-field input[type="text"]:focus {
+        border-color: var(--color-accent);
+      }
+
+      #model-config-status {
+        font-size: 11px;
+        color: var(--color-system-msg);
+        min-height: 1.2em;
+        margin-top: 6px;
+      }
+
       /* ── Game View ─────────────────────────────────────────────────────── */
 
       #game-view {
@@ -316,6 +378,21 @@
       <p id="ollama-status-msg">Checking Ollama...</p>
       <p id="ollama-progress-msg"></p>
       <div id="ollama-setup-buttons"></div>
+
+      <div id="model-config">
+        <details>
+          <summary>Model Configuration</summary>
+          <div class="model-field">
+            <label for="input-heavy-model">Heavy Model (generation)</label>
+            <input type="text" id="input-heavy-model" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="model-field">
+            <label for="input-light-model">Light Model (intent parsing)</label>
+            <input type="text" id="input-light-model" autocomplete="off" spellcheck="false" />
+          </div>
+          <div id="model-config-status"></div>
+        </details>
+      </div>
     </div>
 
     <!-- Game Screen -->

@@ -24,6 +24,9 @@ const btnCreateWorld = document.getElementById('btn-create-world') as HTMLButton
 const ollamaStatusMsg = document.getElementById('ollama-status-msg') as HTMLParagraphElement;
 const ollamaProgressMsg = document.getElementById('ollama-progress-msg') as HTMLParagraphElement;
 const ollamaSetupButtons = document.getElementById('ollama-setup-buttons') as HTMLDivElement;
+const inputHeavyModel = document.getElementById('input-heavy-model') as HTMLInputElement;
+const inputLightModel = document.getElementById('input-light-model') as HTMLInputElement;
+const modelConfigStatus = document.getElementById('model-config-status') as HTMLDivElement;
 
 // Game view
 const hudHp = document.getElementById('hud-hp') as HTMLSpanElement;
@@ -73,10 +76,20 @@ function showPicker(): void {
   refreshWorldList();
 }
 
-function showSetup(): void {
+async function showSetup(): Promise<void> {
   worldPickerEl.style.display = 'none';
   ollamaSetupEl.style.display = 'flex';
   gameViewEl.style.display = 'none';
+
+  // Populate model config inputs from the current config
+  try {
+    const config = await window.electronAPI.getConfig();
+    inputHeavyModel.value = config.heavyModel;
+    inputLightModel.value = config.lightModel;
+    modelConfigStatus.textContent = '';
+  } catch {
+    // Non-fatal — inputs remain blank
+  }
 }
 
 function showGame(roomDescription: string, roomName?: string, hud?: HudData): void {
@@ -195,6 +208,39 @@ async function runPullModels(): Promise<void> {
   // Pull succeeded — re-run the full check
   runSetupCheck();
 }
+
+// ---------------------------------------------------------------------------
+// Model config inputs — persist on blur and re-check Ollama
+// ---------------------------------------------------------------------------
+
+async function saveModelConfig(): Promise<void> {
+  const heavyModel = inputHeavyModel.value.trim();
+  const lightModel = inputLightModel.value.trim();
+  if (!heavyModel || !lightModel) return;
+
+  modelConfigStatus.textContent = 'Saving...';
+  const result = await window.electronAPI.setConfig({ heavyModel, lightModel });
+  if (!result.ok) {
+    modelConfigStatus.textContent = `Error: ${result.error}`;
+    return;
+  }
+  modelConfigStatus.textContent = 'Saved. Re-checking models...';
+  runSetupCheck();
+}
+
+inputHeavyModel.addEventListener('blur', () => {
+  if (inputHeavyModel.value.trim() !== inputHeavyModel.dataset.lastSaved) {
+    inputHeavyModel.dataset.lastSaved = inputHeavyModel.value.trim();
+    saveModelConfig();
+  }
+});
+
+inputLightModel.addEventListener('blur', () => {
+  if (inputLightModel.value.trim() !== inputLightModel.dataset.lastSaved) {
+    inputLightModel.dataset.lastSaved = inputLightModel.value.trim();
+    saveModelConfig();
+  }
+});
 
 // ---------------------------------------------------------------------------
 // World picker logic

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { loadConfig } from './app-config';
+import { loadConfig, saveConfig } from './app-config';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,5 +72,41 @@ describe('loadConfig', () => {
     const written = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf-8'));
     // lightModel should have been added
     expect(written.lightModel).toBe('gemma4:e2b');
+  });
+});
+
+describe('saveConfig', () => {
+  it('writes the given config to config.json', () => {
+    const config = { heavyModel: 'llama3:70b', lightModel: 'phi3:mini' };
+    saveConfig(tmpDir, config);
+    const written = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf-8'));
+    expect(written.heavyModel).toBe('llama3:70b');
+    expect(written.lightModel).toBe('phi3:mini');
+  });
+
+  it('overwrites an existing config.json', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'config.json'),
+      JSON.stringify({ heavyModel: 'old-heavy:7b', lightModel: 'old-light:1b' }),
+      'utf-8',
+    );
+    saveConfig(tmpDir, { heavyModel: 'new-heavy:13b', lightModel: 'new-light:3b' });
+    const written = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf-8'));
+    expect(written.heavyModel).toBe('new-heavy:13b');
+    expect(written.lightModel).toBe('new-light:3b');
+  });
+
+  it('creates parent directory if it does not exist', () => {
+    const nested = path.join(tmpDir, 'deep', 'nested');
+    saveConfig(nested, { heavyModel: 'a:1b', lightModel: 'b:1b' });
+    expect(fs.existsSync(path.join(nested, 'config.json'))).toBe(true);
+  });
+
+  it('loadConfig reads back what saveConfig wrote', () => {
+    const config = { heavyModel: 'mistral:7b', lightModel: 'tinyllama:1b' };
+    saveConfig(tmpDir, config);
+    const loaded = loadConfig(tmpDir);
+    expect(loaded.heavyModel).toBe('mistral:7b');
+    expect(loaded.lightModel).toBe('tinyllama:1b');
   });
 });
