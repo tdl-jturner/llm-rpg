@@ -11,10 +11,11 @@ All generation calls a locally-running [Ollama](https://ollama.com) instance. Co
 ## Requirements
 
 - [Node.js](https://nodejs.org) 20+
-- [Ollama](https://ollama.com) running locally at `http://localhost:11434`
-- At least one model pulled (e.g. `ollama pull llama3.2`)
+- An LLM provider — choose one:
+  - **Ollama** (local): [ollama.com](https://ollama.com), running at `http://localhost:11434` with at least one model pulled
+  - **Google AI Studio** (cloud): a free API key from [aistudio.google.com](https://aistudio.google.com)
 
-On first launch the app checks whether Ollama is reachable and whether your configured models are pulled. If not, a setup screen guides you through it.
+On first launch a setup screen lets you pick your provider, enter credentials, and verify connectivity before creating a world.
 
 ## Getting started
 
@@ -81,12 +82,16 @@ If you die: you respawn at the starting room with full HP, keeping all your item
 
 ## Configuration
 
-Model settings are accessible from the app. Two model slots are configurable:
+Provider and model settings are accessible from the app.
 
-- **Heavy model** — used for room, monster, and item generation
-- **Light model** — used for intent parsing (fast, low-latency)
+| Setting | Description |
+|---------|-------------|
+| **Provider** | `ollama` (local) or `google-ai-studio` (cloud) |
+| **Google API key** | Required when using Google AI Studio |
+| **Heavy model** | Used for room, monster, and item generation (default: `qwen3.5:9b` / Gemini) |
+| **Light model** | Used for intent parsing — should be fast and low-latency (default: `gemma4:e2b` / Gemini Flash) |
 
-Defaults are set on first launch.
+Settings are stored in `<userData>/config.json` and merged with defaults on each launch so new fields are never missing.
 
 ## Project structure
 
