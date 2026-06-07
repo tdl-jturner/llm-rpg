@@ -27,7 +27,7 @@ describe('assembleBlurb — with items', () => {
       { name: 'rusty sword', room_blurb: 'A rusty sword lies across the altar.', disturbed: true },
     ];
     const result = assembleBlurb({ fixed_description: 'A dim chamber.' }, { items });
-    expect(result).toBe('A dim chamber.\nA rusty sword lies on the floor here.');
+    expect(result).toBe('A dim chamber.\nA rusty sword lies on the ground here.');
   });
 
   it('items appear before scenery in output', () => {
@@ -48,7 +48,7 @@ describe('assembleBlurb — with items', () => {
     ];
     const result = assembleBlurb({ fixed_description: 'A vault.' }, { items });
     expect(result).toBe(
-      'A vault.\nAn ornate longsword rests here.\nA dagger lies on the floor here.',
+      'A vault.\nAn ornate longsword rests here.\nA dagger lies on the ground here.',
     );
   });
 
@@ -110,5 +110,41 @@ describe('assembleBlurb — with scenery', () => {
       { scenery: [{ room_blurb: 'A banner hangs here.' }] },
     );
     expect(result).toBe('You enter a hall.\nA banner hangs here.');
+  });
+});
+
+describe('assembleBlurb — with exits', () => {
+  it('appends exits line after all other content', () => {
+    const result = assembleBlurb(
+      { fixed_description: 'A crossroads.' },
+      { exits: ['N', 'S', 'E'] },
+    );
+    expect(result).toBe('A crossroads.\nExits: N, S, E');
+  });
+
+  it('omits exits line when exits array is empty', () => {
+    const result = assembleBlurb(
+      { fixed_description: 'A dead end.' },
+      { exits: [] },
+    );
+    expect(result).toBe('A dead end.');
+  });
+
+  it('omits exits line when exits not provided', () => {
+    const result = assembleBlurb({ fixed_description: 'A room.' });
+    expect(result).toBe('A room.');
+  });
+
+  it('exits appear after scenery, items, and monsters', () => {
+    const items = [{ name: 'torch', room_blurb: 'A torch sputters.', disturbed: false }];
+    const monsters = [{ room_blurb: 'A rat scurries here.' }];
+    const scenery = [{ room_blurb: 'Mossy stones line the walls.' }];
+    const result = assembleBlurb(
+      { fixed_description: 'A tunnel.' },
+      { items, monsters, scenery, exits: ['N', 'D'] },
+    );
+    expect(result).toBe(
+      'A tunnel.\nA torch sputters.\nA rat scurries here.\nMossy stones line the walls.\nExits: N, D',
+    );
   });
 });

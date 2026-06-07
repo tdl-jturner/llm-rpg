@@ -21,6 +21,7 @@ export interface AssembleOptions {
   items?: ItemBlurb[];
   scenery?: SceneryBlurb[];
   monsters?: MonsterBlurb[];
+  exits?: string[];
 }
 
 /**
@@ -37,13 +38,13 @@ export interface AssembleOptions {
  * Monsters disappear from LOOK once dead (location changes to "dead:<id>").
  */
 export function assembleBlurb(room: RoomData, options: AssembleOptions = {}): string {
-  const { items = [], scenery = [], monsters = [] } = options;
+  const { items = [], scenery = [], monsters = [], exits } = options;
 
   const parts: string[] = [room.fixed_description];
 
   for (const item of items) {
     if (item.disturbed) {
-      parts.push(`A ${item.name} lies on the floor here.`);
+      parts.push(`A ${item.name} lies on the ground here.`);
     } else {
       if (item.room_blurb) {
         parts.push(item.room_blurb);
@@ -61,6 +62,10 @@ export function assembleBlurb(room: RoomData, options: AssembleOptions = {}): st
     if (s.room_blurb) {
       parts.push(s.room_blurb);
     }
+  }
+
+  if (exits && exits.length > 0) {
+    parts.push(`Exits: ${exits.join(', ')}`);
   }
 
   return parts.join('\n');
