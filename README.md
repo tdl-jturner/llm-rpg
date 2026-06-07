@@ -26,6 +26,13 @@ npm start
 
 On launch you'll see a world picker. Click **Create New World**, select a `WORLD.md` file, and start exploring.
 
+## Example worlds
+
+Two ready-to-play worlds live in [`worlds/`](worlds/):
+
+- [`dungeon.WORLD.md`](worlds/dungeon.WORLD.md) — The Dungeon of Aethon: a dark, claustrophobic underground complex full of ancient creatures
+- [`forest.WORLD.md`](worlds/forest.WORLD.md) — The Verdant Labyrinth: a vast, overgrown forest that may or may not be dreaming
+
 ## Writing a WORLD.md
 
 A world file is a YAML frontmatter block followed by free-form markdown prose.
