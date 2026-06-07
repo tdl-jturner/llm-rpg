@@ -31,12 +31,12 @@ const DEFAULTS: AppConfig = {
 export function loadConfig(userDataPath: string): AppConfig {
   const configPath = path.join(userDataPath, 'config.json');
 
-  let raw: Partial<AppConfig> = {};
+  let raw: Partial<AppConfig> & { googleApiKey?: string } = {};
 
   if (fs.existsSync(configPath)) {
     try {
       const content = fs.readFileSync(configPath, 'utf-8');
-      raw = JSON.parse(content) as Partial<AppConfig>;
+      raw = JSON.parse(content) as typeof raw;
     } catch {
       // Corrupt config — fall back to defaults and overwrite below
       raw = {};
@@ -47,7 +47,8 @@ export function loadConfig(userDataPath: string): AppConfig {
     provider: raw.provider ?? DEFAULTS.provider,
     heavyModel: raw.heavyModel ?? DEFAULTS.heavyModel,
     lightModel: raw.lightModel ?? DEFAULTS.lightModel,
-    apiKey: raw.apiKey ?? DEFAULTS.apiKey,
+    // Migrate: 'googleApiKey' was renamed to 'apiKey' — preserve existing keys
+    apiKey: raw.apiKey ?? raw.googleApiKey ?? DEFAULTS.apiKey,
   };
 
   // Write back so the file always reflects the merged result

@@ -42,6 +42,11 @@ export async function callModel(
   prompt: string,
   jsonMode: boolean,
 ): Promise<string> {
+  if (!apiKey) {
+    throw new Error(
+      'No binding seal found — inscribe your Google AI Studio API key in the Chosen Minds section.',
+    );
+  }
   const ai = new GoogleGenAI({ apiKey });
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
