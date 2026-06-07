@@ -10,13 +10,17 @@ import fs from 'fs';
 import path from 'path';
 
 export interface AppConfig {
+  provider: 'ollama' | 'google-ai-studio';
   heavyModel: string;
   lightModel: string;
+  googleApiKey: string;
 }
 
 const DEFAULTS: AppConfig = {
+  provider: 'ollama',
   heavyModel: 'qwen3.5:9b',
   lightModel: 'gemma4:e2b',
+  googleApiKey: '',
 };
 
 /**
@@ -40,8 +44,10 @@ export function loadConfig(userDataPath: string): AppConfig {
   }
 
   const merged: AppConfig = {
+    provider: raw.provider ?? DEFAULTS.provider,
     heavyModel: raw.heavyModel ?? DEFAULTS.heavyModel,
     lightModel: raw.lightModel ?? DEFAULTS.lightModel,
+    googleApiKey: raw.googleApiKey ?? DEFAULTS.googleApiKey,
   };
 
   // Write back so the file always reflects the merged result

@@ -9,8 +9,10 @@ import { createRealLLM } from './room-generator';
 import { EventLogger } from './event-logger';
 import { getUnknownRefusalKeys } from './refusal-bank';
 import { loadConfig, saveConfig } from './app-config';
-import { isOllamaReachable, listPulledModels, pullModel, callModel } from './ollama-client';
+import { isOllamaReachable, listPulledModels, pullModel, callModel as ollamaCallModel } from './ollama-client';
 import { runOllamaSetup } from './ollama-setup';
+import { callModel as googleCallModel } from './google-ai-studio-client';
+import { runGoogleAIStudioSetup } from './google-ai-studio-setup';
 import type {
   ListWorldsResponse,
   WorldSummary,
@@ -28,28 +30,28 @@ let worldDB: WorldDB | undefined;
 let activeLogger: EventLogger | undefined;
 let activeRefusals: Record<string, string> | undefined;
 let activeWorldBody: string | undefined;
-let appConfig: AppConfig = { heavyModel: 'qwen3:8b', lightModel: 'gemma3:1b' };
+let appConfig: AppConfig = {
+  provider: 'ollama',
+  heavyModel: 'qwen3:8b',
+  lightModel: 'gemma3:1b',
+  googleApiKey: '',
+};
 
-// Real LLM function — uses the heavy model via Ollama, logs each call.
-// Re-created lazily when needed so it always picks up the current appConfig
-// and activeLogger.
-function getRealLLM() {
-  return createRealLLM(
-    appConfig.heavyModel,
-    callModel,
-    activeLogger ?? undefined,
-  );
+function getCallModelFn() {
+  if (appConfig.provider === 'google-ai-studio') {
+    const key = appConfig.googleApiKey;
+    return (tag: string, prompt: string, jsonMode: boolean) =>
+      googleCallModel(key, tag, prompt, jsonMode);
+  }
+  return ollamaCallModel;
 }
 
-// Light LLM function — uses the light model via Ollama for fast NL intent parsing.
-// Re-created lazily when needed so it always picks up the current appConfig
-// and activeLogger.
+function getRealLLM() {
+  return createRealLLM(appConfig.heavyModel, getCallModelFn(), activeLogger ?? undefined);
+}
+
 function getLightLLM() {
-  return createRealLLM(
-    appConfig.lightModel,
-    callModel,
-    activeLogger ?? undefined,
-  );
+  return createRealLLM(appConfig.lightModel, getCallModelFn(), activeLogger ?? undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -367,13 +369,16 @@ function registerIpcHandlers(): void {
     }
   });
 
-  // ── Ollama: check reachability + models ──────────────────────────────────
+  // ── Provider: check reachability / credentials ───────────────────────────
   ipcMain.handle('check-ollama', async (): Promise<OllamaCheckResult> => {
+    if (appConfig.provider === 'google-ai-studio') {
+      return runGoogleAIStudioSetup(appConfig);
+    }
     return runOllamaSetup(appConfig, {
       isReachable: isOllamaReachable,
       listModels: listPulledModels,
       callModel: async (tag, prompt, jsonMode) => {
-        const response = await callModel(tag, prompt, jsonMode);
+        const response = await ollamaCallModel(tag, prompt, jsonMode);
         activeLogger?.logLlmCall({ model: tag, prompt, response, ok: true });
         return response;
       },
@@ -382,6 +387,9 @@ function registerIpcHandlers(): void {
 
   // ── Ollama: pull missing models ───────────────────────────────────────────
   ipcMain.handle('pull-models', async (event): Promise<ActionResult> => {
+    if (appConfig.provider === 'google-ai-studio') {
+      return { ok: true };
+    }
     let pulledModels: string[];
     try {
       pulledModels = await listPulledModels();

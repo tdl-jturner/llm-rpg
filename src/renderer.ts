@@ -25,6 +25,9 @@ const ollamaStatusMsg = document.getElementById('ollama-status-msg') as HTMLPara
 const ollamaProgressMsg = document.getElementById('ollama-progress-msg') as HTMLParagraphElement;
 const ollamaFlavorMsg = document.getElementById('ollama-flavor-msg') as HTMLParagraphElement;
 const ollamaSetupButtons = document.getElementById('ollama-setup-buttons') as HTMLDivElement;
+const inputProvider = document.getElementById('input-provider') as HTMLSelectElement;
+const apiKeyField = document.getElementById('api-key-field') as HTMLDivElement;
+const inputApiKey = document.getElementById('input-api-key') as HTMLInputElement;
 const inputHeavyModel = document.getElementById('input-heavy-model') as HTMLInputElement;
 const inputLightModel = document.getElementById('input-light-model') as HTMLInputElement;
 const modelConfigStatus = document.getElementById('model-config-status') as HTMLDivElement;
@@ -37,6 +40,7 @@ const scrollback = document.getElementById('scrollback') as HTMLDivElement;
 const input = document.getElementById('input') as HTMLInputElement;
 const form = document.getElementById('input-form') as HTMLFormElement;
 const backToPickerBtn = document.getElementById('back-to-picker') as HTMLButtonElement;
+const openOraclesBtn = document.getElementById('open-oracles') as HTMLButtonElement;
 const spinner = document.getElementById('spinner') as HTMLSpanElement;
 
 // ---------------------------------------------------------------------------
@@ -50,6 +54,7 @@ let activeWorldFolder: string | null = null;
 // Deferred game navigation — stored when the user picks a world while the
 // setup screen hasn't run yet, or to re-enter game after setup succeeds.
 let pendingGameNav: { roomDescription: string; roomName?: string; hud?: HudData } | null = null;
+let returnToGameAfterSetup = false;
 
 // ---------------------------------------------------------------------------
 // HUD
@@ -85,8 +90,11 @@ async function showSetup(): Promise<void> {
   // Populate model config inputs from the current config
   try {
     const config = await window.electronAPI.getConfig();
+    inputProvider.value = config.provider;
+    inputApiKey.value = config.googleApiKey;
     inputHeavyModel.value = config.heavyModel;
     inputLightModel.value = config.lightModel;
+    apiKeyField.style.display = config.provider === 'google-ai-studio' ? 'flex' : 'none';
     modelConfigStatus.textContent = '';
   } catch {
     // Non-fatal — inputs remain blank
@@ -215,6 +223,12 @@ async function runSetupCheck(): Promise<void> {
       const nav = pendingGameNav;
       pendingGameNav = null;
       showGame(nav.roomDescription, nav.roomName, nav.hud);
+    } else if (returnToGameAfterSetup) {
+      returnToGameAfterSetup = false;
+      worldPickerEl.style.display = 'none';
+      ollamaSetupEl.style.display = 'none';
+      gameViewEl.style.display = 'flex';
+      input.focus();
     } else {
       showPicker();
     }
@@ -245,6 +259,15 @@ async function runSetupCheck(): Promise<void> {
   if (result.phase === 'smoke_test') {
     ollamaStatusMsg.textContent =
       `${result.error}\n\nThe mind woke but gave no answer. Try restarting Ollama and trying again.`;
+    setSetupButtons(
+      makeButton('Try Again', 'primary', () => runSetupCheck()),
+    );
+    return;
+  }
+
+  if (result.phase === 'auth') {
+    ollamaStatusMsg.textContent =
+      `${result.error}\n\nOpen "Chosen Minds" below and inscribe a valid API key.`;
     setSetupButtons(
       makeButton('Try Again', 'primary', () => runSetupCheck()),
     );
@@ -287,19 +310,40 @@ async function runPullModels(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function saveModelConfig(): Promise<void> {
+  const provider = inputProvider.value as 'ollama' | 'google-ai-studio';
   const heavyModel = inputHeavyModel.value.trim();
   const lightModel = inputLightModel.value.trim();
+  const googleApiKey = inputApiKey.value.trim();
   if (!heavyModel || !lightModel) return;
 
   modelConfigStatus.textContent = 'Binding the new minds...';
-  const result = await window.electronAPI.setConfig({ heavyModel, lightModel });
+  const result = await window.electronAPI.setConfig({ provider, heavyModel, lightModel, googleApiKey });
   if (!result.ok) {
     modelConfigStatus.textContent = `Error: ${result.error}`;
     return;
   }
-  modelConfigStatus.textContent = 'Bound. Re-rousing the oracles...';
-  runSetupCheck();
+  modelConfigStatus.textContent = 'Saved.';
+  setSetupButtons(
+    makeButton('Re-verify', 'primary', () => runSetupCheck()),
+  );
 }
+
+inputProvider.addEventListener('change', () => {
+  const isGoogle = inputProvider.value === 'google-ai-studio';
+  apiKeyField.style.display = isGoogle ? 'flex' : 'none';
+  if (isGoogle) {
+    inputHeavyModel.value = 'gemini-2.5-flash';
+    inputLightModel.value = 'gemini-2.5-flash';
+  }
+  saveModelConfig();
+});
+
+inputApiKey.addEventListener('blur', () => {
+  if (inputApiKey.value.trim() !== inputApiKey.dataset.lastSaved) {
+    inputApiKey.dataset.lastSaved = inputApiKey.value.trim();
+    saveModelConfig();
+  }
+});
 
 inputHeavyModel.addEventListener('blur', () => {
   if (inputHeavyModel.value.trim() !== inputHeavyModel.dataset.lastSaved) {
@@ -418,6 +462,22 @@ backToPickerBtn.addEventListener('click', () => {
   showPicker();
 });
 
+openOraclesBtn.addEventListener('click', async () => {
+  returnToGameAfterSetup = true;
+  await showSetup();
+  ollamaStatusMsg.textContent = 'Adjust your oracles below, then re-verify.';
+  setSetupButtons(
+    makeButton('Re-verify', 'primary', () => runSetupCheck()),
+    makeButton('Back to Game', '', () => {
+      returnToGameAfterSetup = false;
+      worldPickerEl.style.display = 'none';
+      ollamaSetupEl.style.display = 'none';
+      gameViewEl.style.display = 'flex';
+      input.focus();
+    }),
+  );
+});
+
 // Global "Open All Logs" button — wired up after DOM is ready
 const openAllLogsBtn = document.createElement('button');
 openAllLogsBtn.textContent = 'Open All Logs';
@@ -482,7 +542,18 @@ form.addEventListener('submit', async (e) => {
   spinner.classList.add('active');
   startGenerateFlavors();
 
-  const response = await window.electronAPI.submitInput(text);
+  let response;
+  try {
+    response = await window.electronAPI.submitInput(text);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    appendLine(`(The oracle falls silent: ${msg})`, 'system-msg');
+    stopGenerateFlavors();
+    spinner.classList.remove('active');
+    input.disabled = false;
+    input.focus();
+    return;
+  }
   for (const line of response.narrative) {
     appendLine(line, classifyLine(line));
   }

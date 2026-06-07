@@ -35,6 +35,17 @@
         <details>
           <summary>Chosen Minds</summary>
           <div class="model-field">
+            <label for="input-provider">Oracle Origin</label>
+            <select id="input-provider">
+              <option value="ollama">Ollama</option>
+              <option value="google-ai-studio">Google AI Studio</option>
+            </select>
+          </div>
+          <div class="model-field" id="api-key-field" style="display:none">
+            <label for="input-api-key">Binding Seal (API Key)</label>
+            <input type="password" id="input-api-key" autocomplete="off" spellcheck="false" placeholder="AIza..." />
+          </div>
+          <div class="model-field">
             <label for="input-heavy-model">Heavy Mind &mdash; the narrator</label>
             <input type="text" id="input-heavy-model" autocomplete="off" spellcheck="false" />
           </div>
@@ -55,6 +66,7 @@
       <div id="scrollback"></div>
       <div id="input-area">
         <button id="back-to-picker" title="Back to world picker">[worlds]</button>
+        <button id="open-oracles" title="Configure oracles">[oracles]</button>
         <span>&gt;</span>
         <form id="input-form">
           <input id="input" type="text" autocomplete="off" spellcheck="false" />

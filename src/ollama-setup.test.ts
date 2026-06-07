@@ -8,8 +8,10 @@ import type { AppConfig } from './app-config';
 // ---------------------------------------------------------------------------
 
 const CONFIG: AppConfig = {
+  provider: 'ollama',
   heavyModel: 'heavy:7b',
   lightModel: 'light:1b',
+  googleApiKey: '',
 };
 
 function makeDeps(overrides: Partial<OllamaSetupDeps> = {}): OllamaSetupDeps {

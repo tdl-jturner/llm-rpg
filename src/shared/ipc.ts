@@ -65,8 +65,10 @@ export type ActionResult =
 // ---------------------------------------------------------------------------
 
 export interface AppConfig {
+  provider: 'ollama' | 'google-ai-studio';
   heavyModel: string;
   lightModel: string;
+  googleApiKey: string;
 }
 
 /**
@@ -76,7 +78,7 @@ export interface AppConfig {
  */
 export type OllamaCheckResult =
   | { ok: true }
-  | { ok: false; error: string; phase: 'reachability' | 'models' | 'smoke_test' };
+  | { ok: false; error: string; phase: 'reachability' | 'models' | 'smoke_test' | 'auth' };
 
 // ---------------------------------------------------------------------------
 // Electron API exposed via contextBridge
