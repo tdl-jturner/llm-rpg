@@ -292,7 +292,7 @@ export async function handleSubmitInput(
       const result = await worldDB.movePlayer(intent.direction, generationLlmFn, logger);
 
       if (result.ok) {
-        worldDB.preloadAdjacentRooms(generationLlmFn, logger);
+        worldDB.preloadAdjacentRooms(generationLlmFn, logger, intent.direction);
       }
 
       if (!result.ok) {

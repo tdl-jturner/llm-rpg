@@ -168,10 +168,10 @@ export interface WorldDB {
   respawnPlayer(logger?: EventLogger): Room;
 
   /**
-   * Fire-and-forget background generation for all unmapped exits of the current room.
-   * Rooms are inserted into the DB so movePlayer() picks them up via loop closure.
+   * Enqueue background generation for unmapped exits up to 2 hops away. Runs at most
+   * 1 preload concurrently so the free-tier rate limit always has headroom for blocking moves.
    */
-  preloadAdjacentRooms(llmFn: LLMFunction, logger?: EventLogger): void;
+  preloadAdjacentRooms(llmFn: LLMFunction, logger?: EventLogger, lastDirection?: string): void;
 
   /** All visited rooms on the given y-floor and the exits between them, for the map overlay. */
   getMapData(floor: number): MapData;
@@ -275,6 +275,265 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
     }
     stmtMarkRoomVisited.run(destRoomId);
     return healAmount;
+  }
+
+  // ── Preload queue ────────────────────────────────────────────────────────────
+  // At most 1 preload runs at a time, leaving headroom in the rate-limit budget
+  // for blocking moves. Items are re-sorted on each dequeue: 1-hop before 2-hop,
+  // last-direction-traveled as tiebreaker.
+
+  interface PreloadQueueItem {
+    coords: Coords;
+    hopDistance: 1 | 2;
+    isLastDirection: boolean;
+    fromCoords: Coords;
+    dirFromParent: string;
+  }
+
+  const preloadQueue: PreloadQueueItem[] = [];
+  const preloadQueuedCoords = new Set<string>();
+  let preloadActive = false;
+  let preloadLlmFn: LLMFunction | null = null;
+  let preloadLoggerRef: EventLogger | undefined;
+
+  function preloadCoordKey(c: Coords): string {
+    return `${c.x},${c.y},${c.z}`;
+  }
+
+  function enqueuePreload(item: PreloadQueueItem): void {
+    const key = preloadCoordKey(item.coords);
+    if (preloadQueuedCoords.has(key)) return;
+    if (stmtGetRoomByCoords.get(item.coords.x, item.coords.y, item.coords.z)) return;
+    preloadQueuedCoords.add(key);
+    preloadQueue.push(item);
+  }
+
+  async function processPreloadQueue(): Promise<void> {
+    if (preloadActive || !preloadLlmFn) return;
+    preloadActive = true;
+    const llmFn = preloadLlmFn;
+    const ALL_DIRECTIONS = ['north', 'south', 'east', 'west', 'up', 'down'];
+
+    try {
+      while (true) {
+        // Re-sort on each dequeue so new arrivals (e.g. from enqueuePreload calls
+        // while we were awaiting) are ordered correctly.
+        preloadQueue.sort((a, b) => {
+          if (a.hopDistance !== b.hopDistance) return a.hopDistance - b.hopDistance;
+          return (b.isLastDirection ? 1 : 0) - (a.isLastDirection ? 1 : 0);
+        });
+
+        // Pop the front, skipping any that were already generated while queued.
+        let next: PreloadQueueItem | undefined;
+        while (preloadQueue.length > 0) {
+          const candidate = preloadQueue.shift()!;
+          preloadQueuedCoords.delete(preloadCoordKey(candidate.coords));
+          if (!stmtGetRoomByCoords.get(candidate.coords.x, candidate.coords.y, candidate.coords.z)) {
+            next = candidate;
+            break;
+          }
+        }
+        if (!next) break;
+
+        const item = next;
+
+        // Resolve parent room at dequeue time so context is up-to-date.
+        const parentRoom = stmtGetRoomByCoords.get(
+          item.fromCoords.x,
+          item.fromCoords.y,
+          item.fromCoords.z,
+        ) as Room | undefined;
+        if (!parentRoom) continue;
+
+        const back = reciprocalDirection(item.dirFromParent);
+        const allowableExits = ALL_DIRECTIONS.filter((d) => d !== back);
+
+        const neighborState: NeighborState = { [back]: 'forced back-exit to previous room' };
+        for (const d of allowableExits) {
+          const dOffset = directionToOffset(d);
+          const nRoom = stmtGetRoomByCoords.get(
+            item.coords.x + dOffset.x,
+            item.coords.y + dOffset.y,
+            item.coords.z + dOffset.z,
+          ) as Room | undefined;
+          neighborState[d] = nRoom ? `existing room named ${nRoom.name}` : 'empty';
+        }
+
+        const playerStateForGen = stmtGetPlayerState.get() as PlayerState;
+        let genWeaponMin = BALANCE_FIST_MIN;
+        let genWeaponMax = BALANCE_FIST_MAX;
+        if (playerStateForGen.equipped_weapon_id != null) {
+          const equippedForGen = stmtGetItem.get(playerStateForGen.equipped_weapon_id) as ItemRow | undefined;
+          if (equippedForGen) {
+            genWeaponMin = equippedForGen.damage_min;
+            genWeaponMax = equippedForGen.damage_max;
+          }
+        }
+        const monsterBounds = computeMonsterBounds(genWeaponMin, genWeaponMax, playerStateForGen.max_hp);
+
+        if (stmtGetRoomByCoords.get(item.coords.x, item.coords.y, item.coords.z)) continue;
+
+        try {
+          const genResult = await generateRoom({
+            coords: item.coords,
+            allowableExits,
+            llmFn,
+            context: {
+              worldBody,
+              previousRoomDescription: parentRoom.fixed_description,
+              directionTraveled: item.dirFromParent,
+              neighborState,
+              monsterBounds,
+            },
+          });
+
+          const roomToCommit = genResult.ok ? genResult.room : LIMINAL_GAP_ROOM;
+
+          if (stmtGetRoomByCoords.get(item.coords.x, item.coords.y, item.coords.z)) continue;
+
+          try {
+            db.transaction(() => {
+              const insertResult = stmtInsertRoom.run(
+                roomToCommit.name,
+                item.coords.x,
+                item.coords.y,
+                item.coords.z,
+                roomToCommit.fixed_description,
+              );
+              const newRoomId = insertResult.lastInsertRowid as number;
+
+              const allNewRoomExits = [...new Set([back, ...roomToCommit.exits])];
+              const stmtInsertAllowed = db.prepare(
+                'INSERT OR IGNORE INTO room_allowed_exits (room_id, direction) VALUES (?, ?)',
+              );
+              for (const d of allNewRoomExits) {
+                stmtInsertAllowed.run(newRoomId, d);
+              }
+
+              if (roomToCommit.scenery && roomToCommit.scenery.length > 0) {
+                const stmtInsertScenery = db.prepare(
+                  'INSERT INTO scenery (room_id, name, description, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?)',
+                );
+                for (const s of roomToCommit.scenery) {
+                  stmtInsertScenery.run(newRoomId, s.name, s.inspection_description, s.inspection_description, s.room_blurb);
+                }
+              }
+
+              if (roomToCommit.items && roomToCommit.items.length > 0) {
+                const stmtInsertItem = db.prepare(
+                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                );
+                for (const it of roomToCommit.items) {
+                  stmtInsertItem.run(
+                    it.name,
+                    it.inspection_description,
+                    `room:${newRoomId}`,
+                    it.damage_min,
+                    it.damage_max,
+                    it.type,
+                    0,
+                    it.inspection_description,
+                    it.room_blurb,
+                    0,
+                  );
+                }
+              }
+
+              if (roomToCommit.armor && roomToCommit.armor.length > 0) {
+                const stmtInsertArmor = db.prepare(
+                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                );
+                for (const piece of roomToCommit.armor) {
+                  stmtInsertArmor.run(
+                    piece.name,
+                    piece.inspection_description,
+                    `room:${newRoomId}`,
+                    0,
+                    0,
+                    piece.type,
+                    0,
+                    piece.inspection_description,
+                    piece.room_blurb,
+                    piece.armor_value,
+                  );
+                }
+              }
+
+              if (roomToCommit.monsters && roomToCommit.monsters.length > 0) {
+                const stmtInsertMonster = db.prepare(
+                  'INSERT INTO monsters (name, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)',
+                );
+                const stmtInsertDrop = db.prepare(
+                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                );
+                for (const monster of roomToCommit.monsters) {
+                  const monsterResult = stmtInsertMonster.run(
+                    monster.name,
+                    `room:${newRoomId}`,
+                    monster.hp,
+                    monster.hp,
+                    monster.damage_min,
+                    monster.damage_max,
+                    monster.inspection_description,
+                    monster.room_blurb,
+                  );
+                  const monsterId = monsterResult.lastInsertRowid as number;
+                  stmtInsertDrop.run(
+                    monster.drop.name,
+                    monster.drop.inspection_description,
+                    `monster:${monsterId}`,
+                    monster.drop.damage_min,
+                    monster.drop.damage_max,
+                    'weapon',
+                    0,
+                    monster.drop.inspection_description,
+                    monster.drop.room_blurb,
+                    0,
+                  );
+                }
+              }
+            })();
+
+            preloadLoggerRef?.logGenRoom({
+              room_id: (stmtGetRoomByCoords.get(item.coords.x, item.coords.y, item.coords.z) as Room).id,
+              coords: item.coords,
+              source: genResult.ok ? 'llm' : 'stub',
+            });
+
+            // After generating a 1-hop room, enqueue its exits as 2-hop candidates.
+            if (item.hopDistance === 1) {
+              const newRoom = stmtGetRoomByCoords.get(item.coords.x, item.coords.y, item.coords.z) as Room | undefined;
+              if (newRoom) {
+                const newRoomExits = (stmtGetAllowedExits.all(newRoom.id) as { direction: string }[]).map((r) => r.direction);
+                for (const exitDir of newRoomExits) {
+                  const offset = directionToOffset(exitDir);
+                  enqueuePreload({
+                    coords: {
+                      x: item.coords.x + offset.x,
+                      y: item.coords.y + offset.y,
+                      z: item.coords.z + offset.z,
+                    },
+                    hopDistance: 2,
+                    isLastDirection: false,
+                    fromCoords: item.coords,
+                    dirFromParent: exitDir,
+                  });
+                }
+              }
+            }
+          } catch {
+            // UNIQUE constraint on (x, y, z): movePlayer() committed this room concurrently — no-op
+          }
+        } catch (err) {
+          preloadLoggerRef?.logError({
+            message: `Background preload failed for ${item.dirFromParent} (${item.coords.x},${item.coords.y},${item.coords.z})`,
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    } finally {
+      preloadActive = false;
+    }
   }
 
   return {
@@ -1032,14 +1291,17 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       };
     },
 
-    preloadAdjacentRooms(llmFn: LLMFunction, logger?: EventLogger): void {
+    preloadAdjacentRooms(llmFn: LLMFunction, logger?: EventLogger, lastDirection?: string): void {
+      preloadLlmFn = llmFn;
+      preloadLoggerRef = logger;
+
       const playerRow = stmtPlayerRoom.get() as { current_room_id: number };
       const currentRoom = stmtGetRoom.get(playerRow.current_room_id) as Room;
       const allowedExits = (
         stmtGetAllowedExits.all(currentRoom.id) as { direction: string }[]
       ).map((r) => r.direction);
 
-      const ALL_DIRECTIONS = ['north', 'south', 'east', 'west', 'up', 'down'];
+      const currentCoords: Coords = { x: currentRoom.x, y: currentRoom.y, z: currentRoom.z };
 
       for (const exitDir of allowedExits) {
         const offset = directionToOffset(exitDir);
@@ -1049,190 +1311,36 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           z: currentRoom.z + offset.z,
         };
 
-        // Skip if a room already exists at this coordinate
-        if (stmtGetRoomByCoords.get(targetCoords.x, targetCoords.y, targetCoords.z)) continue;
+        enqueuePreload({
+          coords: targetCoords,
+          hopDistance: 1,
+          isLastDirection: exitDir === lastDirection,
+          fromCoords: currentCoords,
+          dirFromParent: exitDir,
+        });
 
-        const back = reciprocalDirection(exitDir);
-        const allowableExits = ALL_DIRECTIONS.filter((d) => d !== back);
-
-        // Build neighbor state snapshot at dispatch time
-        const neighborState: NeighborState = {
-          [back]: 'forced back-exit to previous room',
-        };
-        for (const d of allowableExits) {
-          const dOffset = directionToOffset(d);
-          const nCoords: Coords = {
-            x: targetCoords.x + dOffset.x,
-            y: targetCoords.y + dOffset.y,
-            z: targetCoords.z + dOffset.z,
-          };
-          const nRoom = stmtGetRoomByCoords.get(nCoords.x, nCoords.y, nCoords.z) as Room | undefined;
-          neighborState[d] = nRoom ? `existing room named ${nRoom.name}` : 'empty';
-        }
-
-        // Snapshot monster bounds at dispatch time
-        const playerStateForGen = stmtGetPlayerState.get() as PlayerState;
-        let genWeaponMin = BALANCE_FIST_MIN;
-        let genWeaponMax = BALANCE_FIST_MAX;
-        if (playerStateForGen.equipped_weapon_id != null) {
-          const equippedForGen = stmtGetItem.get(playerStateForGen.equipped_weapon_id) as ItemRow | undefined;
-          if (equippedForGen) {
-            genWeaponMin = equippedForGen.damage_min;
-            genWeaponMax = equippedForGen.damage_max;
-          }
-        }
-        const monsterBounds = computeMonsterBounds(genWeaponMin, genWeaponMax, playerStateForGen.max_hp);
-
-        // Fire generation in background — capture loop variables
-        const capturedTargetCoords = { ...targetCoords };
-        const capturedBack = back;
-        const capturedAllowableExits = [...allowableExits];
-        const capturedNeighborState = { ...neighborState };
-        const capturedPreviousRoomDescription = currentRoom.fixed_description;
-        const capturedExitDir = exitDir;
-
-        void (async () => {
-          // Re-check before calling the LLM — player may have already moved there
-          if (stmtGetRoomByCoords.get(capturedTargetCoords.x, capturedTargetCoords.y, capturedTargetCoords.z)) return;
-
-          try {
-          const genResult = await generateRoom({
-            coords: capturedTargetCoords,
-            allowableExits: capturedAllowableExits,
-            llmFn,
-            context: {
-              worldBody,
-              previousRoomDescription: capturedPreviousRoomDescription,
-              directionTraveled: capturedExitDir,
-              neighborState: capturedNeighborState,
-              monsterBounds,
-            },
-          });
-
-          const roomToCommit = genResult.ok ? genResult.room : LIMINAL_GAP_ROOM;
-
-          // Check again — movePlayer() may have generated this room while we awaited
-          if (stmtGetRoomByCoords.get(capturedTargetCoords.x, capturedTargetCoords.y, capturedTargetCoords.z)) return;
-
-          try {
-            db.transaction(() => {
-              const insertResult = stmtInsertRoom.run(
-                roomToCommit.name,
-                capturedTargetCoords.x,
-                capturedTargetCoords.y,
-                capturedTargetCoords.z,
-                roomToCommit.fixed_description,
-              );
-              const newRoomId = insertResult.lastInsertRowid as number;
-
-              const allNewRoomExits = [...new Set([capturedBack, ...roomToCommit.exits])];
-              const stmtInsertAllowed = db.prepare(
-                'INSERT OR IGNORE INTO room_allowed_exits (room_id, direction) VALUES (?, ?)',
-              );
-              for (const d of allNewRoomExits) {
-                stmtInsertAllowed.run(newRoomId, d);
-              }
-
-              if (roomToCommit.scenery && roomToCommit.scenery.length > 0) {
-                const stmtInsertScenery = db.prepare(
-                  'INSERT INTO scenery (room_id, name, description, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?)',
-                );
-                for (const s of roomToCommit.scenery) {
-                  stmtInsertScenery.run(newRoomId, s.name, s.inspection_description, s.inspection_description, s.room_blurb);
-                }
-              }
-
-              if (roomToCommit.items && roomToCommit.items.length > 0) {
-                const stmtInsertItem = db.prepare(
-                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                );
-                for (const item of roomToCommit.items) {
-                  stmtInsertItem.run(
-                    item.name,
-                    item.inspection_description,
-                    `room:${newRoomId}`,
-                    item.damage_min,
-                    item.damage_max,
-                    item.type,
-                    0,
-                    item.inspection_description,
-                    item.room_blurb,
-                    0,
-                  );
-                }
-              }
-
-              if (roomToCommit.armor && roomToCommit.armor.length > 0) {
-                const stmtInsertArmor = db.prepare(
-                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                );
-                for (const piece of roomToCommit.armor) {
-                  stmtInsertArmor.run(
-                    piece.name,
-                    piece.inspection_description,
-                    `room:${newRoomId}`,
-                    0,
-                    0,
-                    piece.type,
-                    0,
-                    piece.inspection_description,
-                    piece.room_blurb,
-                    piece.armor_value,
-                  );
-                }
-              }
-
-              if (roomToCommit.monsters && roomToCommit.monsters.length > 0) {
-                const stmtInsertMonster = db.prepare(
-                  'INSERT INTO monsters (name, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)',
-                );
-                const stmtInsertDrop = db.prepare(
-                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                );
-                for (const monster of roomToCommit.monsters) {
-                  const monsterResult = stmtInsertMonster.run(
-                    monster.name,
-                    `room:${newRoomId}`,
-                    monster.hp,
-                    monster.hp,
-                    monster.damage_min,
-                    monster.damage_max,
-                    monster.inspection_description,
-                    monster.room_blurb,
-                  );
-                  const monsterId = monsterResult.lastInsertRowid as number;
-                  stmtInsertDrop.run(
-                    monster.drop.name,
-                    monster.drop.inspection_description,
-                    `monster:${monsterId}`,
-                    monster.drop.damage_min,
-                    monster.drop.damage_max,
-                    'weapon',
-                    0,
-                    monster.drop.inspection_description,
-                    monster.drop.room_blurb,
-                    0,
-                  );
-                }
-              }
-            })();
-
-            logger?.logGenRoom({
-              room_id: (stmtGetRoomByCoords.get(capturedTargetCoords.x, capturedTargetCoords.y, capturedTargetCoords.z) as Room).id,
-              coords: capturedTargetCoords,
-              source: genResult.ok ? 'llm' : 'stub',
-            });
-          } catch {
-            // UNIQUE constraint on (x, y, z): movePlayer() committed this room concurrently — no-op
-          }
-          } catch (err) {
-            logger?.logError({
-              message: `Background preload failed for ${capturedExitDir} (${capturedTargetCoords.x},${capturedTargetCoords.y},${capturedTargetCoords.z})`,
-              detail: err instanceof Error ? err.message : String(err),
+        // For already-existing 1-hop rooms, also enqueue their unmapped exits as 2-hop.
+        const hopRoom = stmtGetRoomByCoords.get(targetCoords.x, targetCoords.y, targetCoords.z) as Room | undefined;
+        if (hopRoom) {
+          const hopExits = (stmtGetAllowedExits.all(hopRoom.id) as { direction: string }[]).map((r) => r.direction);
+          for (const hopExitDir of hopExits) {
+            const hopOffset = directionToOffset(hopExitDir);
+            enqueuePreload({
+              coords: {
+                x: targetCoords.x + hopOffset.x,
+                y: targetCoords.y + hopOffset.y,
+                z: targetCoords.z + hopOffset.z,
+              },
+              hopDistance: 2,
+              isLastDirection: false,
+              fromCoords: targetCoords,
+              dirFromParent: hopExitDir,
             });
           }
-        })();
+        }
       }
+
+      void processPreloadQueue();
     },
 
     getMapData(floor: number): MapData {
