@@ -667,7 +667,7 @@ function renderAsciiMap(mapData: MapData): string {
       const worldX = cx + gx;
       const worldZ = cz + gz;
       const mapCol = gx + W;
-      const mapRow = gz + W;
+      const mapRow = W - gz; // invert z so north (z+1) points up
       const charCol = mapCol * 4;
       const charRow = mapRow * 2;
 
@@ -689,7 +689,7 @@ function renderAsciiMap(mapData: MapData): string {
       if (mapRow < SIZE - 1) {
         const hasSouth =
           exitSet.has(`${worldX},${worldZ},south`) ||
-          exitSet.has(`${worldX},${worldZ + 1},north`);
+          exitSet.has(`${worldX},${worldZ - 1},north`);
         if (hasSouth) grid[charRow + 1][charCol + 1] = '|';
       }
     }
