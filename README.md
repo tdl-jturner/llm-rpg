@@ -6,7 +6,7 @@ Infinite, procedurally generated interactive fiction. Write a short world bible 
 
 The engine lazily generates rooms, monsters, and items as you move into unexplored directions — but once generated, everything is permanent. Walk north, come back south, and the room is exactly as you left it. The world is stored in a SQLite database per world; closing and reopening the app returns you to wherever you were.
 
-All generation calls a locally-running [Ollama](https://ollama.com) instance. Combat, inventory, movement, and target resolution are handled by deterministic engine code — the LLM only generates narrative content and parses natural-language intent.
+All generation is handled by your configured LLM provider (Ollama, Google AI Studio, or OpenRouter). Combat, inventory, movement, and target resolution are handled by deterministic engine code — the LLM only generates narrative content and parses natural-language intent.
 
 ## Requirements
 
@@ -14,6 +14,7 @@ All generation calls a locally-running [Ollama](https://ollama.com) instance. Co
 - An LLM provider — choose one:
   - **Ollama** (local): [ollama.com](https://ollama.com), running at `http://localhost:11434` with at least one model pulled
   - **Google AI Studio** (cloud): a free API key from [aistudio.google.com](https://aistudio.google.com)
+  - **OpenRouter** (cloud): an API key from [openrouter.ai](https://openrouter.ai); free models are available with no billing required
 
 On first launch a setup screen lets you pick your provider, enter credentials, and verify connectivity before creating a world.
 
@@ -28,10 +29,12 @@ On launch you'll see a world picker. Click **Create New World**, select a `WORLD
 
 ## Example worlds
 
-Two ready-to-play worlds live in [`worlds/`](worlds/):
+Four ready-to-play worlds live in [`worlds/`](worlds/):
 
 - [`dungeon.md`](worlds/dungeon.md) — The Dungeon of Aethon: a dark, claustrophobic underground complex full of ancient creatures
 - [`forest.md`](worlds/forest.md) — The Verdant Labyrinth: a vast, overgrown forest that may or may not be dreaming
+- [`alpha-complex.md`](worlds/alpha-complex.md) — Alpha Complex: a Paranoia XP-style dystopia where The Computer is your friend and treason is everywhere
+- [`flatland.md`](worlds/flatland.md) — Flat Land: a minimal test world for quick experimentation
 
 ## Writing a WORLD.md
 
@@ -93,8 +96,8 @@ Provider and model settings are accessible from the app.
 
 | Setting | Description |
 |---------|-------------|
-| **Provider** | `ollama` (local) or `google-ai-studio` (cloud) |
-| **Google API key** | Required when using Google AI Studio |
+| **Provider** | `ollama` (local), `google-ai-studio`, or `openrouter` (cloud) |
+| **API key** | Required for Google AI Studio and OpenRouter |
 | **Heavy model** | Used for room, monster, and item generation (default: `qwen3.5:9b` / Gemini) |
 | **Light model** | Used for intent parsing — should be fast and low-latency (default: `gemma4:e2b` / Gemini Flash) |
 
