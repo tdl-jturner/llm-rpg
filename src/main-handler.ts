@@ -287,6 +287,10 @@ export async function handleSubmitInput(
 
       const result = await worldDB.movePlayer(intent.direction, generationLlmFn, logger);
 
+      if (result.ok) {
+        worldDB.preloadAdjacentRooms(generationLlmFn, logger);
+      }
+
       if (!result.ok) {
         if (result.reason === 'no_exit') {
           narrative.push(emitRefusal('no_exit', logger, refusals));

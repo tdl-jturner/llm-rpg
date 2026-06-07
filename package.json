@@ -9,6 +9,7 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
+    "postinstall": "npm rebuild",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

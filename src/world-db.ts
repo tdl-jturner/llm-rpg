@@ -159,6 +159,12 @@ export interface WorldDB {
    * refill HP of all monsters that were ever engaged.
    */
   respawnPlayer(logger?: EventLogger): Room;
+
+  /**
+   * Fire-and-forget background generation for all unmapped exits of the current room.
+   * Rooms are inserted into the DB so movePlayer() picks them up via loop closure.
+   */
+  preloadAdjacentRooms(llmFn: LLMFunction, logger?: EventLogger): void;
 }
 
 /**
@@ -867,6 +873,180 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         generated: true,
         generationFailed,
       };
+    },
+
+    preloadAdjacentRooms(llmFn: LLMFunction, logger?: EventLogger): void {
+      const playerRow = stmtPlayerRoom.get() as { current_room_id: number };
+      const currentRoom = stmtGetRoom.get(playerRow.current_room_id) as Room;
+      const allowedExits = (
+        stmtGetAllowedExits.all(currentRoom.id) as { direction: string }[]
+      ).map((r) => r.direction);
+
+      const ALL_DIRECTIONS = ['north', 'south', 'east', 'west', 'up', 'down'];
+
+      for (const exitDir of allowedExits) {
+        const offset = directionToOffset(exitDir);
+        const targetCoords: Coords = {
+          x: currentRoom.x + offset.x,
+          y: currentRoom.y + offset.y,
+          z: currentRoom.z + offset.z,
+        };
+
+        // Skip if a room already exists at this coordinate
+        if (stmtGetRoomByCoords.get(targetCoords.x, targetCoords.y, targetCoords.z)) continue;
+
+        const back = reciprocalDirection(exitDir);
+        const allowableExits = ALL_DIRECTIONS.filter((d) => d !== back);
+
+        // Build neighbor state snapshot at dispatch time
+        const neighborState: NeighborState = {
+          [back]: 'forced back-exit to previous room',
+        };
+        for (const d of allowableExits) {
+          const dOffset = directionToOffset(d);
+          const nCoords: Coords = {
+            x: targetCoords.x + dOffset.x,
+            y: targetCoords.y + dOffset.y,
+            z: targetCoords.z + dOffset.z,
+          };
+          const nRoom = stmtGetRoomByCoords.get(nCoords.x, nCoords.y, nCoords.z) as Room | undefined;
+          neighborState[d] = nRoom ? `existing room named ${nRoom.name}` : 'empty';
+        }
+
+        // Snapshot monster bounds at dispatch time
+        const playerStateForGen = stmtGetPlayerState.get() as PlayerState;
+        let genWeaponMin = BALANCE_FIST_MIN;
+        let genWeaponMax = BALANCE_FIST_MAX;
+        if (playerStateForGen.equipped_weapon_id != null) {
+          const equippedForGen = stmtGetItem.get(playerStateForGen.equipped_weapon_id) as ItemRow | undefined;
+          if (equippedForGen) {
+            genWeaponMin = equippedForGen.damage_min;
+            genWeaponMax = equippedForGen.damage_max;
+          }
+        }
+        const monsterBounds = computeMonsterBounds(genWeaponMin, genWeaponMax, playerStateForGen.max_hp);
+
+        // Fire generation in background — capture loop variables
+        const capturedTargetCoords = { ...targetCoords };
+        const capturedBack = back;
+        const capturedAllowableExits = [...allowableExits];
+        const capturedNeighborState = { ...neighborState };
+        const capturedPreviousRoomDescription = currentRoom.fixed_description;
+        const capturedExitDir = exitDir;
+
+        void (async () => {
+          // Re-check before calling the LLM — player may have already moved there
+          if (stmtGetRoomByCoords.get(capturedTargetCoords.x, capturedTargetCoords.y, capturedTargetCoords.z)) return;
+
+          const genResult = await generateRoom({
+            coords: capturedTargetCoords,
+            allowableExits: capturedAllowableExits,
+            llmFn,
+            context: {
+              worldBody,
+              previousRoomDescription: capturedPreviousRoomDescription,
+              directionTraveled: capturedExitDir,
+              neighborState: capturedNeighborState,
+              monsterBounds,
+            },
+          });
+
+          const roomToCommit = genResult.ok ? genResult.room : LIMINAL_GAP_ROOM;
+
+          // Check again — movePlayer() may have generated this room while we awaited
+          if (stmtGetRoomByCoords.get(capturedTargetCoords.x, capturedTargetCoords.y, capturedTargetCoords.z)) return;
+
+          try {
+            db.transaction(() => {
+              const insertResult = stmtInsertRoom.run(
+                roomToCommit.name,
+                capturedTargetCoords.x,
+                capturedTargetCoords.y,
+                capturedTargetCoords.z,
+                roomToCommit.fixed_description,
+              );
+              const newRoomId = insertResult.lastInsertRowid as number;
+
+              const allNewRoomExits = [...new Set([capturedBack, ...roomToCommit.exits])];
+              const stmtInsertAllowed = db.prepare(
+                'INSERT OR IGNORE INTO room_allowed_exits (room_id, direction) VALUES (?, ?)',
+              );
+              for (const d of allNewRoomExits) {
+                stmtInsertAllowed.run(newRoomId, d);
+              }
+
+              if (roomToCommit.scenery && roomToCommit.scenery.length > 0) {
+                const stmtInsertScenery = db.prepare(
+                  'INSERT INTO scenery (room_id, name, description, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?)',
+                );
+                for (const s of roomToCommit.scenery) {
+                  stmtInsertScenery.run(newRoomId, s.name, s.inspection_description, s.inspection_description, s.room_blurb);
+                }
+              }
+
+              if (roomToCommit.items && roomToCommit.items.length > 0) {
+                const stmtInsertItem = db.prepare(
+                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                );
+                for (const item of roomToCommit.items) {
+                  stmtInsertItem.run(
+                    item.name,
+                    item.inspection_description,
+                    `room:${newRoomId}`,
+                    item.damage_min,
+                    item.damage_max,
+                    item.type,
+                    0,
+                    item.inspection_description,
+                    item.room_blurb,
+                  );
+                }
+              }
+
+              if (roomToCommit.monsters && roomToCommit.monsters.length > 0) {
+                const stmtInsertMonster = db.prepare(
+                  'INSERT INTO monsters (name, location, hp, max_hp, damage_min, damage_max, inspection_description, room_blurb, engaged) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)',
+                );
+                const stmtInsertDrop = db.prepare(
+                  'INSERT INTO items (name, description, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                );
+                for (const monster of roomToCommit.monsters) {
+                  const monsterResult = stmtInsertMonster.run(
+                    monster.name,
+                    `room:${newRoomId}`,
+                    monster.hp,
+                    monster.hp,
+                    monster.damage_min,
+                    monster.damage_max,
+                    monster.inspection_description,
+                    monster.room_blurb,
+                  );
+                  const monsterId = monsterResult.lastInsertRowid as number;
+                  stmtInsertDrop.run(
+                    monster.drop.name,
+                    monster.drop.inspection_description,
+                    `monster:${monsterId}`,
+                    monster.drop.damage_min,
+                    monster.drop.damage_max,
+                    'weapon',
+                    0,
+                    monster.drop.inspection_description,
+                    monster.drop.room_blurb,
+                  );
+                }
+              }
+            })();
+
+            logger?.logGenRoom({
+              room_id: (stmtGetRoomByCoords.get(capturedTargetCoords.x, capturedTargetCoords.y, capturedTargetCoords.z) as Room).id,
+              coords: capturedTargetCoords,
+              source: genResult.ok ? 'llm' : 'stub',
+            });
+          } catch {
+            // UNIQUE constraint on (x, y, z): movePlayer() committed this room concurrently — no-op
+          }
+        })();
+      }
     },
   };
 }
