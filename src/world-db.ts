@@ -838,7 +838,47 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         return newRoomId;
       });
 
-      const newRoomId = commitTx() as number;
+      let newRoomId: number;
+      try {
+        newRoomId = commitTx() as number;
+      } catch (err: unknown) {
+        if (
+          err &&
+          typeof err === 'object' &&
+          'code' in err &&
+          (err as { code: string }).code === 'SQLITE_CONSTRAINT_UNIQUE'
+        ) {
+          // preloadAdjacentRooms committed this room while we were generating — link and move
+          const racedRoom = stmtGetRoomByCoords.get(
+            targetCoords.x,
+            targetCoords.y,
+            targetCoords.z,
+          ) as Room | undefined;
+          if (racedRoom) {
+            db.transaction(() => {
+              stmtInsertExit.run(fromRoomId, direction, racedRoom.id);
+              const racedExits = new Set(
+                (stmtGetExits.all(racedRoom.id) as { direction: string }[]).map((r) => r.direction),
+              );
+              if (needsRetroBackExit(racedExits, back)) {
+                stmtInsertExit.run(racedRoom.id, back, fromRoomId);
+                stmtInsertAllowedExit.run(racedRoom.id, back);
+              }
+              stmtUpdatePlayerRoom.run(racedRoom.id);
+            })();
+            logger?.logStateMutate({
+              entity: 'player',
+              id: 1,
+              before: { current_room_id: fromRoomId },
+              after: { current_room_id: racedRoom.id },
+              reason: 'move',
+            });
+            logger?.logGenRoom({ room_id: racedRoom.id, coords: targetCoords, source: 'linked' });
+            return { ok: true, room: racedRoom, generated: false };
+          }
+        }
+        throw err;
+      }
 
       // ── 7. Log the gen.room event and player move ─────────────────────────
       logger?.logGenRoom({
@@ -938,6 +978,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           // Re-check before calling the LLM — player may have already moved there
           if (stmtGetRoomByCoords.get(capturedTargetCoords.x, capturedTargetCoords.y, capturedTargetCoords.z)) return;
 
+          try {
           const genResult = await generateRoom({
             coords: capturedTargetCoords,
             allowableExits: capturedAllowableExits,
@@ -1044,6 +1085,9 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
             });
           } catch {
             // UNIQUE constraint on (x, y, z): movePlayer() committed this room concurrently — no-op
+          }
+          } catch {
+            // rate-limit or other generation error in background preload — silently drop
           }
         })();
       }
