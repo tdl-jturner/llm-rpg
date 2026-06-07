@@ -269,7 +269,7 @@ function makeRoomJson(overrides: Partial<{
     hp: number;
     damage_min: number;
     damage_max: number;
-    drop: { name: string; inspection_description: string; room_blurb: string; damage_min: number; damage_max: number };
+    drop: { name: string; inspection_description: string; room_blurb: string; type: string; damage_min?: number; damage_max?: number; armor_value?: number };
   }>;
 }> = {}): string {
   const room = {
@@ -302,6 +302,7 @@ const VALID_MONSTER = {
     name: 'Rusty Dagger',
     inspection_description: 'A rusty blade.',
     room_blurb: 'A dagger lies here.',
+    type: 'weapon',
     damage_min: 1,
     damage_max: 2,
   },

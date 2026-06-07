@@ -482,13 +482,13 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
                     monster.drop.name,
                     monster.drop.inspection_description,
                     `monster:${monsterId}`,
-                    monster.drop.damage_min,
-                    monster.drop.damage_max,
-                    'weapon',
+                    monster.drop.type === 'weapon' ? (monster.drop.damage_min ?? 1) : 0,
+                    monster.drop.type === 'weapon' ? (monster.drop.damage_max ?? 1) : 0,
+                    monster.drop.type,
                     0,
                     monster.drop.inspection_description,
                     monster.drop.room_blurb,
-                    0,
+                    monster.drop.type === 'armor' ? (monster.drop.armor_value ?? 1) : 0,
                   );
                 }
               }
@@ -1194,13 +1194,13 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
               monster.drop.name,
               monster.drop.inspection_description,
               `monster:${monsterId}`,
-              monster.drop.damage_min,
-              monster.drop.damage_max,
-              'weapon',
+              monster.drop.type === 'weapon' ? (monster.drop.damage_min ?? 1) : 0,
+              monster.drop.type === 'weapon' ? (monster.drop.damage_max ?? 1) : 0,
+              monster.drop.type,
               0,
               monster.drop.inspection_description,
               monster.drop.room_blurb,
-              0,
+              monster.drop.type === 'armor' ? (monster.drop.armor_value ?? 1) : 0,
             );
           }
         }

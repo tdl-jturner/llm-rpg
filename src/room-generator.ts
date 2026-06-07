@@ -50,8 +50,12 @@ export interface GeneratedMonsterDrop {
   inspection_description: string;
   /** Authored blurb used when the drop appears in the room after monster death. */
   room_blurb: string;
-  damage_min: number;
-  damage_max: number;
+  type: 'weapon' | 'armor';
+  /** Present when type is "weapon". */
+  damage_min?: number;
+  damage_max?: number;
+  /** Present when type is "armor". */
+  armor_value?: number;
 }
 
 export interface GeneratedMonster {
@@ -215,13 +219,15 @@ const ROOM_SCHEMA = {
           damage_max: { type: 'number' },
           drop: {
             type: 'object',
-            required: ['name', 'inspection_description', 'room_blurb'],
+            required: ['name', 'inspection_description', 'room_blurb', 'type'],
             properties: {
               name: { type: 'string' },
               inspection_description: { type: 'string' },
               room_blurb: { type: 'string' },
+              type: { type: 'string' },
               damage_min: { type: 'number' },
               damage_max: { type: 'number' },
+              armor_value: { type: 'number' },
             },
           },
         },
@@ -405,7 +411,8 @@ export function buildGenerationPrompt(
     '"monsters": [{ "name": string, "inspection_description": string, "room_blurb": string, ' +
     '"hp": number, "damage_min": number, "damage_max": number, ' +
     '"drop": { "name": string, "inspection_description": string, "room_blurb": string, ' +
-    '"damage_min": number, "damage_max": number } }] }',
+    '"type": "weapon"|"armor", ' +
+    '"damage_min"?: number, "damage_max"?: number, "armor_value"?: number } }] }',
   );
   parts.push(
     'Include 0–3 scenery items (permanent fixtures like furniture, carvings, doors, torches). ' +
@@ -443,12 +450,13 @@ export function buildGenerationPrompt(
       `About 50% of rooms should have a monster. ` +
       `Monster hp MUST be between ${monsterBounds.hp_min} and ${monsterBounds.hp_max}. ` +
       `Monster damage_min MUST be ${monsterBounds.damage_min}, damage_max MUST be ${monsterBounds.damage_max}. ` +
-      `The monster's "drop" is a weapon that appears after the monster dies; ` +
-      `drop damage_min MUST be between ${monsterBounds.drop_damage_min} and ${monsterBounds.drop_damage_max}, ` +
-      `drop damage_max MUST be between ${monsterBounds.drop_damage_min} and ${monsterBounds.drop_damage_max}. ` +
+      `The monster's "drop" is an item that appears after the monster dies. ` +
+      `About 50% of the time the drop should be a weapon (type "weapon") and 50% armor (type "armor"). ` +
+      `For a weapon drop: set type to "weapon", damage_min and damage_max each between ${monsterBounds.drop_damage_min} and ${monsterBounds.drop_damage_max}. ` +
+      `For an armor drop: set type to "armor", armor_value between ${monsterBounds.armor_value_min} and ${monsterBounds.armor_value_max}. ` +
       `"room_blurb" for the monster is a 1-sentence description of its presence in the room. ` +
       `"inspection_description" is 2–3 sentences when examined. ` +
-      `The drop's "room_blurb" is written for AFTER the monster is dead (e.g. "A rusty sword lies where the goblin fell."). ` +
+      `The drop's "room_blurb" is written for AFTER the monster is dead (e.g. "A battered shield lies where the goblin fell."). ` +
       `If no monster is desired, use an empty array.`,
     );
   } else {
@@ -516,17 +524,29 @@ function validateGeneratedRoom(
         );
       }
       const drop = monster.drop;
-      if (drop.damage_min < monsterBounds.drop_damage_min || drop.damage_min > monsterBounds.drop_damage_max) {
-        return (
-          `monster "${monster.name}" drop damage_min ${drop.damage_min} is outside allowed range ` +
-          `[${monsterBounds.drop_damage_min}, ${monsterBounds.drop_damage_max}].`
-        );
-      }
-      if (drop.damage_max < monsterBounds.drop_damage_min || drop.damage_max > monsterBounds.drop_damage_max) {
-        return (
-          `monster "${monster.name}" drop damage_max ${drop.damage_max} is outside allowed range ` +
-          `[${monsterBounds.drop_damage_min}, ${monsterBounds.drop_damage_max}].`
-        );
+      if (drop.type === 'armor') {
+        const av = drop.armor_value ?? 0;
+        if (av < monsterBounds.armor_value_min || av > monsterBounds.armor_value_max) {
+          return (
+            `monster "${monster.name}" drop armor_value ${av} is outside allowed range ` +
+            `[${monsterBounds.armor_value_min}, ${monsterBounds.armor_value_max}].`
+          );
+        }
+      } else {
+        const dmin = drop.damage_min ?? 0;
+        const dmax = drop.damage_max ?? 0;
+        if (dmin < monsterBounds.drop_damage_min || dmin > monsterBounds.drop_damage_max) {
+          return (
+            `monster "${monster.name}" drop damage_min ${dmin} is outside allowed range ` +
+            `[${monsterBounds.drop_damage_min}, ${monsterBounds.drop_damage_max}].`
+          );
+        }
+        if (dmax < monsterBounds.drop_damage_min || dmax > monsterBounds.drop_damage_max) {
+          return (
+            `monster "${monster.name}" drop damage_max ${dmax} is outside allowed range ` +
+            `[${monsterBounds.drop_damage_min}, ${monsterBounds.drop_damage_max}].`
+          );
+        }
       }
     }
   }
