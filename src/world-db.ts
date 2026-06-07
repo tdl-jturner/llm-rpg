@@ -22,6 +22,7 @@ export interface Room {
   y: number;
   z: number;
   fixed_description: string;
+  visited: number; // 0 = never entered by player, 1 = visited
 }
 
 export interface PlayerState {
@@ -38,7 +39,7 @@ export interface PlayerState {
 // ---------------------------------------------------------------------------
 
 export type MoveResult =
-  | { ok: true; room: Room; generated: boolean; generationFailed?: boolean }
+  | { ok: true; room: Room; generated: boolean; generationFailed?: boolean; hpRestored: number }
   | { ok: false; reason: 'no_exit' | 'generation_failed'; error?: string };
 
 export interface SceneryRow {
@@ -250,10 +251,27 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
   const stmtGetDropForMonster = db.prepare(
     'SELECT id, name, location, damage_min, damage_max, type, disturbed, inspection_description, room_blurb, armor_value FROM items WHERE location = ?',
   );
+  const stmtMarkRoomVisited = db.prepare('UPDATE rooms SET visited = 1 WHERE id = ?');
+  const stmtGetRoomVisited = db.prepare('SELECT visited FROM rooms WHERE id = ?');
 
   // ── Startup: seed exits from frontmatter for the starting room ───────────
   // The starting room was inserted without exits (they have no target room_id yet).
   // We leave them unmapped here — the movement engine creates exit rows on demand.
+
+  function applyEntryHeal(destRoomId: number): number {
+    const visitedRow = stmtGetRoomVisited.get(destRoomId) as { visited: number } | undefined;
+    const isNew = !visitedRow || visitedRow.visited === 0;
+    const player = stmtGetPlayerState.get() as PlayerState;
+    const healAmount = Math.min(
+      Math.floor(player.max_hp * (isNew ? 0.25 : 0.05)),
+      player.max_hp - player.hp,
+    );
+    if (healAmount > 0) {
+      stmtUpdatePlayerHp.run(player.hp + healAmount);
+    }
+    stmtMarkRoomVisited.run(destRoomId);
+    return healAmount;
+  }
 
   return {
     db,
@@ -661,7 +679,8 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           after: { current_room_id: toRoom.id },
           reason: 'move',
         });
-        return { ok: true, room: toRoom, generated: false };
+        const hpRestored = applyEntryHeal(toRoom.id);
+        return { ok: true, room: toRoom, generated: false, hpRestored };
       }
 
       // ── 2. Is this direction a declared frontmatter exit? ────────────────
@@ -741,7 +760,8 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           source: 'linked',
         });
 
-        return { ok: true, room: existingRoom, generated: false };
+        const hpRestoredLinked = applyEntryHeal(existingRoom.id);
+        return { ok: true, room: existingRoom, generated: false, hpRestored: hpRestoredLinked };
       }
 
       // ── 5. Generate a new room ───────────────────────────────────────────
@@ -964,7 +984,8 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
               reason: 'move',
             });
             logger?.logGenRoom({ room_id: racedRoom.id, coords: targetCoords, source: 'linked' });
-            return { ok: true, room: racedRoom, generated: false };
+            const hpRestoredRaced = applyEntryHeal(racedRoom.id);
+            return { ok: true, room: racedRoom, generated: false, hpRestored: hpRestoredRaced };
           }
         }
         throw err;
@@ -994,6 +1015,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
       });
 
       const newRoom = stmtGetRoom.get(newRoomId) as Room;
+      const hpRestoredNew = applyEntryHeal(newRoomId);
 
       // Surface the liminal-gap indicator via the room's name so the renderer
       // can detect it and show the one-line notice.
@@ -1002,6 +1024,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
         room: newRoom,
         generated: true,
         generationFailed,
+        hpRestored: hpRestoredNew,
       };
     },
 

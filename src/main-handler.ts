@@ -315,6 +315,9 @@ export async function handleSubmitInput(
           scenery,
           exits,
         }));
+        if (result.hpRestored > 0) {
+          narrative.push(`You feel somewhat restored. (+${result.hpRestored} HP)`);
+        }
         if (result.generationFailed) {
           narrative.push(emitRefusal('generation_failed', logger, refusals));
         }
