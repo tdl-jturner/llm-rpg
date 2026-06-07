@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { handleSubmitInput, buildHudData, resetDisambiguationState } from './main-handler';
+import { handleSubmitInput, buildHudData, buildInitialRoomDescription, resetDisambiguationState } from './main-handler';
 import { openWorldDB } from './world-db';
 import type { WorldDB } from './world-db';
 import { loadWorldFile } from './world-file-loader';
@@ -221,7 +221,7 @@ function registerIpcHandlers(): void {
       ok: true,
       folderName,
       title: world.title,
-      startingRoomDescription: worldDB.getCurrentRoom().fixed_description,
+      startingRoomDescription: buildInitialRoomDescription(worldDB),
       hud: buildHudData(worldDB),
     };
   });
@@ -263,7 +263,7 @@ function registerIpcHandlers(): void {
     return {
       ok: true,
       title: parsed.world.title,
-      currentRoomDescription: worldDB.getCurrentRoom().fixed_description,
+      currentRoomDescription: buildInitialRoomDescription(worldDB),
       hud: buildHudData(worldDB),
     };
   });
@@ -280,6 +280,7 @@ function registerIpcHandlers(): void {
     activeLogger?.close();
     activeLogger = undefined;
     activeWorldBody = undefined;
+    activeRefusals = undefined;
     resetDisambiguationState();
 
     // Delete the SQLite database; preserve WORLD.md and logs/
@@ -310,6 +311,8 @@ function registerIpcHandlers(): void {
     try {
       worldDB = openWorldDB(worldDir, parsed.world);
       activeWorldBody = parsed.world.body;
+      activeRefusals = parsed.world.refusals;
+      openLogger(folderName, mdPath);
     } catch (e) {
       return { ok: false, error: `Could not re-create world database: ${e instanceof Error ? e.message : e}` };
     }

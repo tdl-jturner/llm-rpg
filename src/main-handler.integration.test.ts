@@ -15,7 +15,7 @@ import path from 'path';
 import { openWorldDB } from './world-db';
 import type { WorldDB } from './world-db';
 import type { WorldFile } from './world-file-loader';
-import { handleSubmitInput, resetDisambiguationState, getDisambiguationState } from './main-handler';
+import { handleSubmitInput, resetDisambiguationState, getDisambiguationState, buildInitialRoomDescription } from './main-handler';
 import { EventLogger } from './event-logger';
 
 // ---------------------------------------------------------------------------
@@ -1067,5 +1067,93 @@ describe('Disambiguation state cleared on world switch', () => {
     expect(getDisambiguationState()).not.toBeNull();
     expect(getDisambiguationState()?.pendingIntent).toBe('look_at');
     expect(getDisambiguationState()?.candidates).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildInitialRoomDescription
+// ---------------------------------------------------------------------------
+
+describe('buildInitialRoomDescription', () => {
+  it('returns only fixed_description when room has no items, monsters, scenery, or exits', () => {
+    const worldFile = makeWorldFile({ exits: [] });
+    const db = openFreshDB(worldFile);
+
+    const result = buildInitialRoomDescription(db);
+
+    expect(result).toBe('You stand at the threshold.');
+  });
+
+  it('does not show Exits line for starting room (exits are unmapped until first traversal)', () => {
+    // The starting room has allowed exits configured in room_allowed_exits, but
+    // getCurrentRoomExits() reads from the exits table (actual mapped connections).
+    // On first load the exits table is empty — no exits have been traversed yet.
+    const db = openFreshDB(); // uses exits: ['north', 'south', 'east', 'west']
+
+    const result = buildInitialRoomDescription(db);
+
+    // Exits line is absent until the player actually travels through a direction
+    expect(result).not.toContain('Exits:');
+    // Fixed description is still present
+    expect(result).toContain('You stand at the threshold.');
+  });
+
+  it('includes item room_blurb for undisturbed items in the starting room', () => {
+    const worldFile = makeWorldFile({
+      items: [{
+        name: 'Rusty Sword',
+        inspection_description: 'A corroded blade.',
+        room_blurb: 'A rusty sword lies across the altar.',
+        damage_min: 1,
+        damage_max: 3,
+        type: 'weapon',
+      }],
+    });
+    const db = openFreshDB(worldFile);
+
+    const result = buildInitialRoomDescription(db);
+
+    expect(result).toContain('A rusty sword lies across the altar.');
+  });
+
+  it('includes monster room_blurb for monsters in the starting room', () => {
+    const worldFile = makeWorldFile({
+      monsters: [{
+        name: 'Cave Rat',
+        inspection_description: 'A scrawny rat.',
+        room_blurb: 'A cave rat lurks here.',
+        hp: 5,
+        max_hp: 5,
+        damage_min: 1,
+        damage_max: 2,
+      }],
+    });
+    const db = openFreshDB(worldFile);
+
+    const result = buildInitialRoomDescription(db);
+
+    expect(result).toContain('A cave rat lurks here.');
+  });
+
+  it('matches the output of a LOOK command on the same room', async () => {
+    const worldFile = makeWorldFile({
+      items: [{
+        name: 'Torch',
+        inspection_description: 'A flickering torch.',
+        room_blurb: 'A torch hangs on the wall.',
+        damage_min: 1,
+        damage_max: 2,
+        type: 'weapon',
+      }],
+    });
+    const db = openFreshDB(worldFile);
+    const llmFn = vi.fn();
+
+    const lookResult = await handleSubmitInput('look', db, llmFn, undefined, 'world body');
+    const lookBlurb = lookResult.narrative.slice(1).join('\n'); // skip "> look"
+
+    const initialDescription = buildInitialRoomDescription(db);
+
+    expect(initialDescription).toBe(lookBlurb);
   });
 });

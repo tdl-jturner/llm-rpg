@@ -47,6 +47,26 @@ export function getDisambiguationState(): DisambiguationState | null {
 }
 
 /**
+ * Assembles a full room description for the current room — identical to what
+ * the LOOK command produces. Used at world-load time (create / continue) so
+ * the player immediately sees items, monsters, scenery, and exits rather than
+ * only the bare architectural fixed_description.
+ */
+export function buildInitialRoomDescription(worldDB: WorldDB): string {
+  const room = worldDB.getCurrentRoom();
+  const scenery = worldDB.getSceneryForRoom(room.id);
+  const items = worldDB.getItemsInRoom(room.id);
+  const monsters = worldDB.getMonstersInRoom(room.id);
+  const exits = worldDB.getCurrentRoomExits();
+  return assembleBlurb(room, {
+    items: items.map((i) => ({ name: i.name, room_blurb: i.room_blurb, disturbed: i.disturbed === 1 })),
+    monsters: monsters.map((m) => ({ room_blurb: m.room_blurb })),
+    scenery,
+    exits,
+  });
+}
+
+/**
  * Build HUD snapshot from the current world state.
  * Called after every turn to keep the renderer's HUD strip up to date.
  */
