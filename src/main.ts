@@ -9,6 +9,7 @@ import { createRealLLM } from './room-generator';
 import { EventLogger } from './event-logger';
 import { getUnknownRefusalKeys } from './refusal-bank';
 import { loadConfig, saveConfig } from './app-config';
+import { logInfo, logError } from './console-logger';
 import { isOllamaReachable, listPulledModels, pullModel, callModel as ollamaCallModel } from './ollama-client';
 import { runOllamaSetup } from './ollama-setup';
 import { callModel as googleCallModel } from './google-ai-studio-client';
@@ -54,11 +55,11 @@ function getCallModelFn() {
 }
 
 function getRealLLM() {
-  return createRealLLM(appConfig.heavyModel, getCallModelFn(), activeLogger ?? undefined);
+  return createRealLLM(appConfig.heavyModel, getCallModelFn(), activeLogger ?? undefined, appConfig.provider);
 }
 
 function getLightLLM() {
-  return createRealLLM(appConfig.lightModel, getCallModelFn(), activeLogger ?? undefined);
+  return createRealLLM(appConfig.lightModel, getCallModelFn(), activeLogger ?? undefined, appConfig.provider);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +227,7 @@ function registerIpcHandlers(): void {
       worldDB = openWorldDB(worldDir, world);
       activeRefusals = world.refusals;
       activeWorldBody = world.body;
+      logInfo(`World loaded: "${world.title}" (${filePath})`);
       const logger = openLogger(folderName, path.join(worldDir, 'WORLD.md'));
       // Warn about unknown refusal keys
       if (world.refusals) {
@@ -273,6 +275,7 @@ function registerIpcHandlers(): void {
       worldDB = openWorldDB(worldDir, parsed.world);
       activeRefusals = parsed.world.refusals;
       activeWorldBody = parsed.world.body;
+      logInfo(`World loaded: "${parsed.world.title}" (${mdPath})`);
       const logger = openLogger(folderName, mdPath);
       // Warn about unknown refusal keys
       if (parsed.world.refusals) {
@@ -340,6 +343,7 @@ function registerIpcHandlers(): void {
       worldDB = openWorldDB(worldDir, parsed.world);
       activeWorldBody = parsed.world.body;
       activeRefusals = parsed.world.refusals;
+      logInfo(`World restarted: "${parsed.world.title}" (${mdPath})`);
       openLogger(folderName, mdPath);
     } catch (e) {
       return { ok: false, error: `Could not re-create world database: ${e instanceof Error ? e.message : e}` };
@@ -378,8 +382,10 @@ function registerIpcHandlers(): void {
     try {
       saveConfig(app.getPath('userData'), newConfig);
       appConfig = newConfig;
+      logInfo(`Config updated: provider=${newConfig.provider} heavyModel=${newConfig.heavyModel} lightModel=${newConfig.lightModel}`);
       return { ok: true };
     } catch (e) {
+      logError(`Config save failed: ${e instanceof Error ? e.message : e}`);
       return { ok: false, error: `Could not save config: ${e instanceof Error ? e.message : e}` };
     }
   });

@@ -16,6 +16,7 @@
 import { runWithRetry } from './json-retry-runner';
 import type { LLMFunction, RetryResult } from './json-retry-runner';
 import type { Coords } from './grid-topology';
+import { logInfo, logWarn, logError } from './console-logger';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -272,17 +273,25 @@ export function createRealLLM(
   modelTag: string,
   callModel: (tag: string, prompt: string, jsonMode: boolean) => Promise<string>,
   logger?: LLMCallLogger,
+  provider?: string,
 ): LLMFunction {
+  const modelLabel = provider ? `${provider}/${modelTag}` : modelTag;
   return async (prompt: string): Promise<string> => {
+    logInfo(`LLM call: ${modelLabel} ...`);
+    const start = Date.now();
     let response = '';
     let ok = false;
     try {
       response = await callModel(modelTag, prompt, true);
       ok = true;
     } catch (err) {
+      const ms = Date.now() - start;
+      logError(`LLM call: ${modelLabel} → failed (${ms}ms)`);
       logger?.logLlmCall({ model: modelTag, prompt, response: '', ok: false });
       throw err;
     }
+    const ms = Date.now() - start;
+    logInfo(`LLM call: ${modelLabel} → ok (${ms}ms)`);
     logger?.logLlmCall({ model: modelTag, prompt, response, ok });
     return response;
   };
@@ -478,10 +487,13 @@ export async function generateRoom(options: GenerateRoomOptions): Promise<Genera
 
   const prompt = buildGenerationPrompt(coords, allowableExits, context);
 
+  const coordLabel = `(${coords.x},${coords.y},${coords.z})`;
+
   const result: RetryResult<GeneratedRoom> = await runWithRetry<GeneratedRoom>({
     llmFn,
     schema: ROOM_SCHEMA,
     prompt,
+    onRetry: (attempt, error) => logWarn(`Room gen retry ${attempt} at ${coordLabel}: ${error}`),
     validate: (room) => {
       // Some models omit damage_min/damage_max on the drop even when prompted.
       // Fill from monsterBounds so a nearly-correct response doesn't exhaust retries.
@@ -499,8 +511,11 @@ export async function generateRoom(options: GenerateRoomOptions): Promise<Genera
   });
 
   if (!result.ok) {
+    logError(`Room gen failed at ${coordLabel}: ${result.error}`);
     return { ok: false, error: result.error };
   }
+
+  logInfo(`Room generated at ${coordLabel}: "${result.value.name}"`);
 
   return {
     ok: true,

@@ -31,6 +31,8 @@ export interface RunWithRetryOptions<T> {
    * error as feedback; return null to accept the value.
    */
   validate?: (value: T) => string | null;
+  /** Called each time a retry is triggered, before the next attempt. */
+  onRetry?: (attempt: number, error: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +96,7 @@ const MAX_ATTEMPTS = 3;
 export async function runWithRetry<T>(
   options: RunWithRetryOptions<T>,
 ): Promise<RetryResult<T>> {
-  const { llmFn, schema, maxAttempts = MAX_ATTEMPTS, validate } = options;
+  const { llmFn, schema, maxAttempts = MAX_ATTEMPTS, validate, onRetry } = options;
   let currentPrompt = options.prompt;
   let lastError = '';
 
@@ -110,6 +112,7 @@ export async function runWithRetry<T>(
       lastError = `JSON parse error: ${parseError}`;
 
       if (attempt < maxAttempts) {
+        onRetry?.(attempt, lastError);
         currentPrompt = buildRetryPrompt(options.prompt, raw, lastError, attempt);
       }
       continue;
@@ -121,6 +124,7 @@ export async function runWithRetry<T>(
       lastError = `Schema validation error: ${validationError}`;
 
       if (attempt < maxAttempts) {
+        onRetry?.(attempt, lastError);
         currentPrompt = buildRetryPrompt(options.prompt, raw, lastError, attempt);
       }
       continue;
@@ -133,6 +137,7 @@ export async function runWithRetry<T>(
         lastError = customError;
 
         if (attempt < maxAttempts) {
+          onRetry?.(attempt, lastError);
           currentPrompt = buildRetryPrompt(options.prompt, raw, lastError, attempt);
         }
         continue;
