@@ -253,3 +253,223 @@ describe('buildGenerationPrompt — monster bounds', () => {
     expect(prompt).toContain('monsters');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests for monster bounds validation in generateRoom
+// ---------------------------------------------------------------------------
+
+/** Build a minimal valid GeneratedRoom JSON string */
+function makeRoomJson(overrides: Partial<{
+  exits: string[];
+  monsters: Array<{
+    name: string;
+    inspection_description: string;
+    room_blurb: string;
+    hp: number;
+    damage_min: number;
+    damage_max: number;
+    drop: { name: string; inspection_description: string; room_blurb: string; damage_min: number; damage_max: number };
+  }>;
+}> = {}): string {
+  const room = {
+    name: 'Test Room',
+    fixed_description: 'A room.',
+    exits: overrides.exits ?? ['north'],
+    scenery: [],
+    items: [],
+    monsters: overrides.monsters ?? [],
+  };
+  return JSON.stringify(room);
+}
+
+const BOUNDS = {
+  hp_min: 8, hp_max: 15,
+  damage_min: 2, damage_max: 4,
+  drop_damage_min: 1, drop_damage_max: 2,
+};
+
+const VALID_MONSTER = {
+  name: 'Goblin',
+  inspection_description: 'A small green creature.',
+  room_blurb: 'A goblin lurks here.',
+  hp: 10,
+  damage_min: 2,
+  damage_max: 4,
+  drop: {
+    name: 'Rusty Dagger',
+    inspection_description: 'A rusty blade.',
+    room_blurb: 'A dagger lies here.',
+    damage_min: 1,
+    damage_max: 2,
+  },
+};
+
+describe('generateRoom — monster bounds validation', () => {
+  it('passes when monster stats are within bounds', async () => {
+    const llmFn = vi.fn().mockResolvedValue(makeRoomJson({ monsters: [VALID_MONSTER] }));
+
+    const result = await generateRoom({
+      coords: { x: 0, y: 0, z: 0 },
+      allowableExits: ['north'],
+      llmFn,
+      context: { monsterBounds: BOUNDS },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(llmFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('triggers retry when monster hp is below hp_min', async () => {
+    const outOfBoundsMonster = { ...VALID_MONSTER, hp: 3 }; // below hp_min of 8
+    const llmFn = vi.fn()
+      .mockResolvedValueOnce(makeRoomJson({ monsters: [outOfBoundsMonster] }))
+      .mockResolvedValueOnce(makeRoomJson({ monsters: [VALID_MONSTER] }));
+
+    const result = await generateRoom({
+      coords: { x: 0, y: 0, z: 0 },
+      allowableExits: ['north'],
+      llmFn,
+      context: { monsterBounds: BOUNDS },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(llmFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('triggers retry when monster hp is above hp_max', async () => {
+    const outOfBoundsMonster = { ...VALID_MONSTER, hp: 99 }; // above hp_max of 15
+    const llmFn = vi.fn()
+      .mockResolvedValueOnce(makeRoomJson({ monsters: [outOfBoundsMonster] }))
+      .mockResolvedValueOnce(makeRoomJson({ monsters: [VALID_MONSTER] }));
+
+    const result = await generateRoom({
+      coords: { x: 0, y: 0, z: 0 },
+      allowableExits: ['north'],
+      llmFn,
+      context: { monsterBounds: BOUNDS },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(llmFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('triggers retry when monster damage_min is out of bounds', async () => {
+    const outOfBoundsMonster = { ...VALID_MONSTER, damage_min: 10 }; // above damage_max of 4
+    const llmFn = vi.fn()
+      .mockResolvedValueOnce(makeRoomJson({ monsters: [outOfBoundsMonster] }))
+      .mockResolvedValueOnce(makeRoomJson({ monsters: [VALID_MONSTER] }));
+
+    const result = await generateRoom({
+      coords: { x: 0, y: 0, z: 0 },
+      allowableExits: ['north'],
+      llmFn,
+      context: { monsterBounds: BOUNDS },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(llmFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('triggers retry when drop damage_max exceeds drop_damage_max', async () => {
+    const outOfBoundsMonster = {
+      ...VALID_MONSTER,
+      drop: { ...VALID_MONSTER.drop, damage_max: 99 }, // above drop_damage_max of 2
+    };
+    const llmFn = vi.fn()
+      .mockResolvedValueOnce(makeRoomJson({ monsters: [outOfBoundsMonster] }))
+      .mockResolvedValueOnce(makeRoomJson({ monsters: [VALID_MONSTER] }));
+
+    const result = await generateRoom({
+      coords: { x: 0, y: 0, z: 0 },
+      allowableExits: ['north'],
+      llmFn,
+      context: { monsterBounds: BOUNDS },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(llmFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns ok:false when monster bounds always fail (exhausts retries)', async () => {
+    const outOfBoundsMonster = { ...VALID_MONSTER, hp: 999 };
+    const llmFn = vi.fn().mockResolvedValue(makeRoomJson({ monsters: [outOfBoundsMonster] }));
+
+    const result = await generateRoom({
+      coords: { x: 0, y: 0, z: 0 },
+      allowableExits: ['north'],
+      llmFn,
+      context: { monsterBounds: BOUNDS },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(llmFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('skips bounds validation when no monsterBounds provided', async () => {
+    // Even a "wildly out of range" monster should pass if no bounds are given
+    const anyMonster = { ...VALID_MONSTER, hp: 9999 };
+    const llmFn = vi.fn().mockResolvedValue(makeRoomJson({ monsters: [anyMonster] }));
+
+    const result = await generateRoom({
+      coords: { x: 0, y: 0, z: 0 },
+      allowableExits: ['north'],
+      llmFn,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(llmFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests for exit direction validation in generateRoom
+// ---------------------------------------------------------------------------
+
+describe('generateRoom — exit direction validation', () => {
+  it('triggers retry when LLM returns an invalid exit direction', async () => {
+    const allowable = ['north', 'south'];
+    const llmFn = vi.fn()
+      .mockResolvedValueOnce(makeRoomJson({ exits: ['north', 'northeast'] })) // invalid
+      .mockResolvedValueOnce(makeRoomJson({ exits: ['north'] }));             // valid
+
+    const result = await generateRoom({
+      coords: { x: 0, y: 0, z: 0 },
+      allowableExits: allowable,
+      llmFn,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.room.exits).toEqual(['north']);
+    }
+    expect(llmFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns ok:false when LLM always returns invalid exit directions (exhausts retries)', async () => {
+    const allowable = ['north', 'south'];
+    const llmFn = vi.fn().mockResolvedValue(makeRoomJson({ exits: ['northeast', 'through the archway'] }));
+
+    const result = await generateRoom({
+      coords: { x: 0, y: 0, z: 0 },
+      allowableExits: allowable,
+      llmFn,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(llmFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('accepts a room where all exits are in allowableExits', async () => {
+    const allowable = ['north', 'south', 'east'];
+    const llmFn = vi.fn().mockResolvedValue(makeRoomJson({ exits: ['north', 'south'] }));
+
+    const result = await generateRoom({
+      coords: { x: 0, y: 0, z: 0 },
+      allowableExits: allowable,
+      llmFn,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(llmFn).toHaveBeenCalledTimes(1);
+  });
+});

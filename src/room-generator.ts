@@ -410,6 +410,66 @@ export function buildGenerationPrompt(
 // ---------------------------------------------------------------------------
 
 /**
+ * Domain validator for generated rooms.
+ * Checks exit directions against the allowable set, and if monsterBounds are
+ * provided, checks that each monster's stats lie within the specified bounds.
+ * Returns a descriptive error string on failure, or null on success.
+ */
+function validateGeneratedRoom(
+  room: GeneratedRoom,
+  allowableExits: string[],
+  monsterBounds?: MonsterBoundsContext,
+): string | null {
+  // Validate exits
+  const invalidExits = room.exits.filter((e) => !allowableExits.includes(e));
+  if (invalidExits.length > 0) {
+    return (
+      `exits contains invalid direction(s): ${invalidExits.join(', ')}. ` +
+      `Only these directions are allowed: ${allowableExits.join(', ')}.`
+    );
+  }
+
+  // Validate monster bounds if supplied
+  if (monsterBounds && room.monsters) {
+    for (const monster of room.monsters) {
+      if (monster.hp < monsterBounds.hp_min || monster.hp > monsterBounds.hp_max) {
+        return (
+          `monster "${monster.name}" hp ${monster.hp} is outside allowed range ` +
+          `[${monsterBounds.hp_min}, ${monsterBounds.hp_max}].`
+        );
+      }
+      if (monster.damage_min < monsterBounds.damage_min || monster.damage_min > monsterBounds.damage_max) {
+        return (
+          `monster "${monster.name}" damage_min ${monster.damage_min} is outside allowed range ` +
+          `[${monsterBounds.damage_min}, ${monsterBounds.damage_max}].`
+        );
+      }
+      if (monster.damage_max < monsterBounds.damage_min || monster.damage_max > monsterBounds.damage_max) {
+        return (
+          `monster "${monster.name}" damage_max ${monster.damage_max} is outside allowed range ` +
+          `[${monsterBounds.damage_min}, ${monsterBounds.damage_max}].`
+        );
+      }
+      const drop = monster.drop;
+      if (drop.damage_min < monsterBounds.drop_damage_min || drop.damage_min > monsterBounds.drop_damage_max) {
+        return (
+          `monster "${monster.name}" drop damage_min ${drop.damage_min} is outside allowed range ` +
+          `[${monsterBounds.drop_damage_min}, ${monsterBounds.drop_damage_max}].`
+        );
+      }
+      if (drop.damage_max < monsterBounds.drop_damage_min || drop.damage_max > monsterBounds.drop_damage_max) {
+        return (
+          `monster "${monster.name}" drop damage_max ${drop.damage_max} is outside allowed range ` +
+          `[${monsterBounds.drop_damage_min}, ${monsterBounds.drop_damage_max}].`
+        );
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Generates a room at the given coordinates using the provided LLM function.
  * Returns the parsed room or an error if all retries fail.
  */
@@ -422,21 +482,19 @@ export async function generateRoom(options: GenerateRoomOptions): Promise<Genera
     llmFn,
     schema: ROOM_SCHEMA,
     prompt,
+    validate: (room) => validateGeneratedRoom(room, allowableExits, context?.monsterBounds),
   });
 
   if (!result.ok) {
     return { ok: false, error: result.error };
   }
 
-  // Filter exits to only allowable ones (defensive)
-  const filtered = result.value.exits.filter((e) => allowableExits.includes(e));
-
   return {
     ok: true,
     room: {
       name: result.value.name,
       fixed_description: result.value.fixed_description,
-      exits: filtered,
+      exits: result.value.exits,
       scenery: result.value.scenery ?? [],
       items: result.value.items ?? [],
       monsters: result.value.monsters ?? [],

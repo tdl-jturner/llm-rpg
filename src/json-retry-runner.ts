@@ -25,6 +25,12 @@ export interface RunWithRetryOptions<T> {
   prompt: string;
   /** Maximum number of attempts (default: 3). */
   maxAttempts?: number;
+  /**
+   * Optional semantic/domain validator run after schema validation on each attempt.
+   * Return a non-null string describing the error to trigger a retry with that
+   * error as feedback; return null to accept the value.
+   */
+  validate?: (value: T) => string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +94,7 @@ const MAX_ATTEMPTS = 3;
 export async function runWithRetry<T>(
   options: RunWithRetryOptions<T>,
 ): Promise<RetryResult<T>> {
-  const { llmFn, schema, maxAttempts = MAX_ATTEMPTS } = options;
+  const { llmFn, schema, maxAttempts = MAX_ATTEMPTS, validate } = options;
   let currentPrompt = options.prompt;
   let lastError = '';
 
@@ -118,6 +124,19 @@ export async function runWithRetry<T>(
         currentPrompt = buildRetryPrompt(options.prompt, raw, lastError, attempt);
       }
       continue;
+    }
+
+    // Run optional semantic/domain validator
+    if (validate) {
+      const customError = validate(parsed as T);
+      if (customError) {
+        lastError = customError;
+
+        if (attempt < maxAttempts) {
+          currentPrompt = buildRetryPrompt(options.prompt, raw, lastError, attempt);
+        }
+        continue;
+      }
     }
 
     return { ok: true, value: parsed as T };

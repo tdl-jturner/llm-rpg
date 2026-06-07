@@ -154,4 +154,98 @@ describe('JsonRetryRunner', () => {
       expect(result.value.name).toBe('Vault');
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Custom validate hook
+  // ---------------------------------------------------------------------------
+
+  it('succeeds on retry when first response fails custom validate', async () => {
+    const badJson = JSON.stringify({
+      name: 'Room',
+      fixed_description: 'Bad room.',
+      exits: ['north'],
+    });
+    const goodJson = JSON.stringify({
+      name: 'Good Room',
+      fixed_description: 'Good room.',
+      exits: ['south'],
+    });
+
+    const llmFn = vi.fn()
+      .mockResolvedValueOnce(badJson)
+      .mockResolvedValueOnce(goodJson);
+
+    let validateCallCount = 0;
+    const validate = (value: RoomResponse): string | null => {
+      validateCallCount++;
+      // Fail the first call (exits must be ['south'])
+      if (value.exits[0] !== 'south') {
+        return `exits must be ['south'], got ${JSON.stringify(value.exits)}`;
+      }
+      return null;
+    };
+
+    const result = await runWithRetry<RoomResponse>({
+      llmFn,
+      schema: ROOM_SCHEMA,
+      prompt: 'Generate a room.',
+      validate,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.name).toBe('Good Room');
+    }
+    expect(llmFn).toHaveBeenCalledTimes(2);
+    expect(validateCallCount).toBe(2);
+  });
+
+  it('retry prompt includes custom validation error message', async () => {
+    const badJson = JSON.stringify({
+      name: 'Room',
+      fixed_description: 'Desc.',
+      exits: ['north'],
+    });
+    const goodJson = JSON.stringify({
+      name: 'Fixed Room',
+      fixed_description: 'Fixed.',
+      exits: ['south'],
+    });
+
+    const capturedPrompts: string[] = [];
+    const llmFn = vi.fn().mockImplementation(async (prompt: string) => {
+      capturedPrompts.push(prompt);
+      return capturedPrompts.length === 1 ? badJson : goodJson;
+    });
+
+    await runWithRetry<RoomResponse>({
+      llmFn,
+      schema: ROOM_SCHEMA,
+      prompt: 'Generate a room.',
+      validate: (v) => (v.exits[0] !== 'south' ? 'exits must be south' : null),
+    });
+
+    expect(capturedPrompts).toHaveLength(2);
+    expect(capturedPrompts[1]).toContain('exits must be south');
+  });
+
+  it('returns failure when validate always fails (all 3 attempts)', async () => {
+    const json = JSON.stringify({
+      name: 'Room',
+      fixed_description: 'Desc.',
+      exits: ['north'],
+    });
+
+    const llmFn = vi.fn().mockResolvedValue(json);
+
+    const result = await runWithRetry<RoomResponse>({
+      llmFn,
+      schema: ROOM_SCHEMA,
+      prompt: 'Generate a room.',
+      validate: () => 'always fails',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(llmFn).toHaveBeenCalledTimes(3);
+  });
 });
