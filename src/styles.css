@@ -380,3 +380,42 @@ button.danger:hover {
   50%  { opacity: 0.2; }
   100% { opacity: 1; }
 }
+
+/* ── Map Overlay ───────────────────────────────────────────────────── */
+
+#map-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.88);
+  z-index: 100;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+#map-overlay.visible {
+  display: flex;
+}
+
+#map-room-label {
+  color: var(--color-accent);
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+#map-grid {
+  color: var(--color-narrative);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+  user-select: none;
+}
+
+#map-floor-label {
+  color: var(--color-system-msg);
+  font-size: 11px;
+  letter-spacing: 1px;
+}

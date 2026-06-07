@@ -8,6 +8,7 @@ import type {
   ActionResult,
   OllamaCheckResult,
   AppConfig,
+  MapData,
 } from './shared/ipc';
 
 const api: ElectronAPI = {
@@ -53,6 +54,9 @@ const api: ElectronAPI = {
   onPullProgress: (callback: (status: string) => void): void => {
     ipcRenderer.on('pull-progress', (_event, status: string) => callback(status));
   },
+
+  getMapData: (): Promise<MapData | null> =>
+    ipcRenderer.invoke('get-map-data'),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

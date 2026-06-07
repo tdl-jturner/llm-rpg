@@ -454,6 +454,13 @@ function registerIpcHandlers(): void {
     return { ok: true };
   });
 
+  // ── Map Data ──────────────────────────────────────────────────────────────
+  ipcMain.handle('get-map-data', () => {
+    if (!worldDB) return null;
+    const currentRoom = worldDB.getCurrentRoom();
+    return worldDB.getMapData(currentRoom.y);
+  });
+
   // ── Open Log Folder ───────────────────────────────────────────────────────
   ipcMain.handle('open-log-folder', async (_event, folderName?: string): Promise<ActionResult> => {
     const dir = folderName ? path.join(logsDir(), folderName) : logsDir();

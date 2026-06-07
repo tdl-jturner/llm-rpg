@@ -1,4 +1,4 @@
-import type { ElectronAPI, HudData } from './shared/ipc';
+import type { ElectronAPI, HudData, MapData } from './shared/ipc';
 
 declare global {
   interface Window {
@@ -43,6 +43,12 @@ const form = document.getElementById('input-form') as HTMLFormElement;
 const backToPickerBtn = document.getElementById('back-to-picker') as HTMLButtonElement;
 const openOraclesBtn = document.getElementById('open-oracles') as HTMLButtonElement;
 const spinner = document.getElementById('spinner') as HTMLSpanElement;
+
+// Map overlay
+const mapOverlayEl = document.getElementById('map-overlay') as HTMLDivElement;
+const mapRoomLabelEl = document.getElementById('map-room-label') as HTMLDivElement;
+const mapGridEl = document.getElementById('map-grid') as HTMLPreElement;
+const mapFloorLabelEl = document.getElementById('map-floor-label') as HTMLDivElement;
 
 // ---------------------------------------------------------------------------
 // State
@@ -618,6 +624,103 @@ input.addEventListener('keydown', (e) => {
       input.value = '';
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// Map overlay
+// ---------------------------------------------------------------------------
+
+const MAP_WINDOW = 8;
+
+function renderAsciiMap(mapData: MapData): string {
+  const W = MAP_WINDOW;
+  const SIZE = W * 2 + 1;
+
+  const currentRoom = mapData.rooms.find((r) => r.id === mapData.current_room_id);
+  if (!currentRoom) return '(no visited rooms)';
+
+  const cx = currentRoom.x;
+  const cz = currentRoom.z;
+
+  const roomAt = new Map<string, { id: number }>();
+  for (const r of mapData.rooms) {
+    roomAt.set(`${r.x},${r.z}`, r);
+  }
+
+  const roomCoords = new Map<number, { x: number; z: number }>();
+  for (const r of mapData.rooms) {
+    roomCoords.set(r.id, { x: r.x, z: r.z });
+  }
+
+  const exitSet = new Set<string>();
+  for (const e of mapData.exits) {
+    const coords = roomCoords.get(e.from_room_id);
+    if (coords) exitSet.add(`${coords.x},${coords.z},${e.direction}`);
+  }
+
+  const charCols = SIZE * 4 - 1;
+  const charRows = SIZE * 2 - 1;
+  const grid: string[][] = Array.from({ length: charRows }, () => Array(charCols).fill(' '));
+
+  for (let gz = -W; gz <= W; gz++) {
+    for (let gx = -W; gx <= W; gx++) {
+      const worldX = cx + gx;
+      const worldZ = cz + gz;
+      const mapCol = gx + W;
+      const mapRow = gz + W;
+      const charCol = mapCol * 4;
+      const charRow = mapRow * 2;
+
+      const room = roomAt.get(`${worldX},${worldZ}`);
+      if (!room) continue;
+
+      const isCurrent = room.id === mapData.current_room_id;
+      grid[charRow][charCol] = '[';
+      grid[charRow][charCol + 1] = isCurrent ? '*' : ' ';
+      grid[charRow][charCol + 2] = ']';
+
+      if (mapCol < SIZE - 1) {
+        const hasEast =
+          exitSet.has(`${worldX},${worldZ},east`) ||
+          exitSet.has(`${worldX + 1},${worldZ},west`);
+        if (hasEast) grid[charRow][charCol + 3] = '-';
+      }
+
+      if (mapRow < SIZE - 1) {
+        const hasSouth =
+          exitSet.has(`${worldX},${worldZ},south`) ||
+          exitSet.has(`${worldX},${worldZ + 1},north`);
+        if (hasSouth) grid[charRow + 1][charCol + 1] = '|';
+      }
+    }
+  }
+
+  return grid.map((row) => row.join('')).join('\n');
+}
+
+let mapTabHeld = false;
+
+document.addEventListener('keydown', async (e) => {
+  if (e.key !== 'Tab') return;
+  e.preventDefault();
+  if (mapTabHeld || gameViewEl.style.display === 'none') return;
+  mapTabHeld = true;
+
+  const mapData = await window.electronAPI.getMapData();
+  if (!mapData) return;
+
+  const currentRoom = mapData.rooms.find((r) => r.id === mapData.current_room_id);
+  mapRoomLabelEl.textContent = currentRoom ? currentRoom.name : '';
+  mapFloorLabelEl.textContent = `floor ${mapData.floor}`;
+  mapGridEl.textContent = renderAsciiMap(mapData);
+  mapOverlayEl.classList.add('visible');
+});
+
+document.addEventListener('keyup', (e) => {
+  if (e.key !== 'Tab') return;
+  e.preventDefault();
+  mapTabHeld = false;
+  mapOverlayEl.classList.remove('visible');
 });
 
 // ---------------------------------------------------------------------------

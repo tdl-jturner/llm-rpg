@@ -10,6 +10,7 @@ import type { NeighborState } from './room-generator';
 import { computeMonsterBounds, FIST_DAMAGE_MIN as BALANCE_FIST_MIN, FIST_DAMAGE_MAX as BALANCE_FIST_MAX } from './balance-calculator';
 import type { LLMFunction } from './json-retry-runner';
 import type { EventLogger } from './event-logger';
+import type { MapData } from './shared/ipc';
 import { selectBestWeapon, shouldAutoEquip, selectBestArmor, shouldAutoEquipArmor } from './auto-equip';
 import type { WeaponCandidate, ArmorCandidate } from './auto-equip';
 import { resolveCombat, FIST_DAMAGE_MIN, FIST_DAMAGE_MAX } from './combat-resolver';
@@ -171,6 +172,9 @@ export interface WorldDB {
    * Rooms are inserted into the DB so movePlayer() picks them up via loop closure.
    */
   preloadAdjacentRooms(llmFn: LLMFunction, logger?: EventLogger): void;
+
+  /** All visited rooms on the given y-floor and the exits between them, for the map overlay. */
+  getMapData(floor: number): MapData;
 }
 
 /**
@@ -1229,6 +1233,32 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           }
         })();
       }
+    },
+
+    getMapData(floor: number): MapData {
+      const playerRow = stmtPlayerRoom.get() as { current_room_id: number };
+
+      const rooms = db
+        .prepare('SELECT id, name, x, z FROM rooms WHERE y = ? AND visited = 1')
+        .all(floor) as { id: number; name: string; x: number; z: number }[];
+
+      const exits = db
+        .prepare(
+          `SELECT e.from_room_id, e.direction
+           FROM exits e
+           JOIN rooms r1 ON e.from_room_id = r1.id
+           JOIN rooms r2 ON e.to_room_id = r2.id
+           WHERE r1.y = ? AND r2.y = ?
+             AND e.direction IN ('north', 'south', 'east', 'west')`,
+        )
+        .all(floor, floor) as { from_room_id: number; direction: string }[];
+
+      return {
+        rooms,
+        exits,
+        current_room_id: playerRow.current_room_id,
+        floor,
+      };
     },
   };
 }

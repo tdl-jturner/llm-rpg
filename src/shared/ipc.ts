@@ -85,6 +85,29 @@ export type OllamaCheckResult =
 // Electron API exposed via contextBridge
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Map overlay types
+// ---------------------------------------------------------------------------
+
+export interface MapRoomData {
+  id: number;
+  name: string;
+  x: number;
+  z: number;
+}
+
+export interface MapExitData {
+  from_room_id: number;
+  direction: string;
+}
+
+export interface MapData {
+  rooms: MapRoomData[];
+  exits: MapExitData[];
+  current_room_id: number;
+  floor: number;
+}
+
 export interface ElectronAPI {
   submitInput: (text: string) => Promise<SubmitInputResponse>;
 
@@ -106,4 +129,6 @@ export interface ElectronAPI {
   getConfig: () => Promise<AppConfig>;
   setConfig: (config: AppConfig) => Promise<ActionResult>;
   onPullProgress: (callback: (status: string) => void) => void;
+
+  getMapData: () => Promise<MapData | null>;
 }
