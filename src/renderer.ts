@@ -83,11 +83,20 @@ function showPicker(): void {
 }
 
 const GOOGLE_MODELS = [
-  'gemini-2.5-flash',
+  'gemma-4-31b-it',
+  'gemma-4-26b-a4b-it',
+  'gemma-3-27b-it',
+  'gemini-live-2.5-flash',
+  'gemini-flash-lite-latest',
+  'gemini-flash-latest',
+  'gemini-3.1-pro-preview',
+  'gemini-3.1-flash-lite-preview',
+  'gemini-3.1-flash-lite',
+  'gemini-3-pro-preview',
+  'gemini-3-flash-preview',
   'gemini-2.5-pro',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
 ];
 
 function populateSelect(select: HTMLSelectElement, models: string[], current: string): void {
