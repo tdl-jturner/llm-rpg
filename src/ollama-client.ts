@@ -63,5 +63,7 @@ export async function callModel(
     messages: [{ role: 'user', content: prompt }],
     ...(jsonMode ? { format: 'json' } : {}),
   });
-  return response.message.content;
+  // Some models (e.g. qwen3) emit <think>…</think> reasoning blocks before
+  // their JSON even when format:'json' is set.  Strip them so JSON.parse works.
+  return response.message.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 }
