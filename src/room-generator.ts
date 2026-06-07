@@ -188,7 +188,7 @@ const ROOM_SCHEMA = {
           damage_max: { type: 'number' },
           drop: {
             type: 'object',
-            required: ['name', 'inspection_description', 'room_blurb', 'damage_min', 'damage_max'],
+            required: ['name', 'inspection_description', 'room_blurb'],
             properties: {
               name: { type: 'string' },
               inspection_description: { type: 'string' },
@@ -482,7 +482,20 @@ export async function generateRoom(options: GenerateRoomOptions): Promise<Genera
     llmFn,
     schema: ROOM_SCHEMA,
     prompt,
-    validate: (room) => validateGeneratedRoom(room, allowableExits, context?.monsterBounds),
+    validate: (room) => {
+      // Some models omit damage_min/damage_max on the drop even when prompted.
+      // Fill from monsterBounds so a nearly-correct response doesn't exhaust retries.
+      if (context?.monsterBounds) {
+        const { drop_damage_min, drop_damage_max } = context.monsterBounds;
+        for (const monster of room.monsters ?? []) {
+          if (monster.drop) {
+            if (monster.drop.damage_min == null) monster.drop.damage_min = drop_damage_min;
+            if (monster.drop.damage_max == null) monster.drop.damage_max = drop_damage_max;
+          }
+        }
+      }
+      return validateGeneratedRoom(room, allowableExits, context?.monsterBounds);
+    },
   });
 
   if (!result.ok) {
