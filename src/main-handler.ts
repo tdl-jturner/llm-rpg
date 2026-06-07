@@ -73,11 +73,13 @@ export function buildInitialRoomDescription(worldDB: WorldDB): string {
 export function buildHudData(worldDB: WorldDB): HudData {
   const player = worldDB.getPlayerState();
   const weapon = worldDB.getEquippedWeapon();
+  const armor = worldDB.getEquippedArmor();
   const room = worldDB.getCurrentRoom();
   return {
     hp: player.hp,
     max_hp: player.max_hp,
     weapon: weapon ? { name: weapon.name, damage_min: weapon.damage_min, damage_max: weapon.damage_max } : null,
+    armor: armor ? { name: armor.name, armor_value: armor.armor_value } : null,
     room_name: room.name,
   };
 }
@@ -184,7 +186,9 @@ export async function handleSubmitInput(
 
     case 'take': {
       const room = worldDB.getCurrentRoom();
-      const entities = buildScopeEntities(worldDB, room.id);
+      const inventory = worldDB.getPlayerInventory();
+      const inventoryIds = new Set(inventory.map((i) => i.id));
+      const entities = buildScopeEntities(worldDB, room.id).filter((e) => !inventoryIds.has(e.id));
 
       const result = resolveTarget(intent.target, entities);
 
@@ -204,21 +208,20 @@ export async function handleSubmitInput(
             narrative.push(message);
           }
         } else if (entity.kind === 'item') {
-          // Check if the item is already in inventory
-          const inventory = worldDB.getPlayerInventory();
-          const alreadyHave = inventory.find((i) => i.id === entity.id);
-          if (alreadyHave) {
-            narrative.push(`You already have the ${entity.name}.`);
+          const takenItem = worldDB.takeItem(entity.id, logger);
+          let msg = `You take the ${takenItem.name}.`;
+          if (takenItem.type === 'armor') {
+            const equippedArmor = worldDB.getEquippedArmor();
+            if (equippedArmor && equippedArmor.id === takenItem.id) {
+              msg += ' You don it.';
+            }
           } else {
-            const takenItem = worldDB.takeItem(entity.id, logger);
-            let msg = `You take the ${takenItem.name}.`;
-            // Check if auto-equip happened
             const equipped = worldDB.getEquippedWeapon();
             if (equipped && equipped.id === takenItem.id) {
               msg += ' You wield it.';
             }
-            narrative.push(msg);
           }
+          narrative.push(msg);
         }
       } else {
         // Ambiguous — enter disambiguation
@@ -251,12 +254,13 @@ export async function handleSubmitInput(
     case 'inventory': {
       const inventory = worldDB.getPlayerInventory();
       const equipped = worldDB.getEquippedWeapon();
+      const equippedArmor = worldDB.getEquippedArmor();
 
       if (inventory.length === 0) {
         narrative.push(emitRefusal('inventory_empty', logger, refusals));
       } else {
         const lines = inventory.map((item) => {
-          const isEquipped = equipped && equipped.id === item.id;
+          const isEquipped = (equipped && equipped.id === item.id) || (equippedArmor && equippedArmor.id === item.id);
           return isEquipped ? `${item.name} (equipped)` : item.name;
         });
         narrative.push('You are carrying:\n' + lines.join('\n'));
@@ -488,9 +492,16 @@ async function resolveEntityIntentAsync(
     }
     const takenItem = worldDB.takeItem(entity.id, logger);
     let msg = `You take the ${takenItem.name}.`;
-    const equipped = worldDB.getEquippedWeapon();
-    if (equipped && equipped.id === takenItem.id) {
-      msg += ' You wield it.';
+    if (takenItem.type === 'armor') {
+      const equippedArmor = worldDB.getEquippedArmor();
+      if (equippedArmor && equippedArmor.id === takenItem.id) {
+        msg += ' You don it.';
+      }
+    } else {
+      const equipped = worldDB.getEquippedWeapon();
+      if (equipped && equipped.id === takenItem.id) {
+        msg += ' You wield it.';
+      }
     }
     return [msg];
   }
