@@ -38,6 +38,9 @@ const api: ElectronAPI = {
   pullModels: (): Promise<ActionResult> =>
     ipcRenderer.invoke('pull-models'),
 
+  listOllamaModels: (): Promise<string[]> =>
+    ipcRenderer.invoke('list-ollama-models'),
+
   getConfig: (): Promise<AppConfig> =>
     ipcRenderer.invoke('get-config'),
 

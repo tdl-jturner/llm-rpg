@@ -28,8 +28,8 @@ const ollamaSetupButtons = document.getElementById('ollama-setup-buttons') as HT
 const inputProvider = document.getElementById('input-provider') as HTMLSelectElement;
 const apiKeyField = document.getElementById('api-key-field') as HTMLDivElement;
 const inputApiKey = document.getElementById('input-api-key') as HTMLInputElement;
-const inputHeavyModel = document.getElementById('input-heavy-model') as HTMLInputElement;
-const inputLightModel = document.getElementById('input-light-model') as HTMLInputElement;
+const inputHeavyModel = document.getElementById('input-heavy-model') as HTMLSelectElement;
+const inputLightModel = document.getElementById('input-light-model') as HTMLSelectElement;
 const modelConfigStatus = document.getElementById('model-config-status') as HTMLDivElement;
 
 // Game view
@@ -82,6 +82,37 @@ function showPicker(): void {
   refreshWorldList();
 }
 
+const GOOGLE_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
+];
+
+function populateSelect(select: HTMLSelectElement, models: string[], current: string): void {
+  select.innerHTML = '';
+  const options = models.includes(current) ? models : [current, ...models];
+  for (const m of options) {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m;
+    select.appendChild(opt);
+  }
+  select.value = current;
+}
+
+async function populateModelSelects(provider: string, heavyModel: string, lightModel: string): Promise<void> {
+  if (provider === 'google-ai-studio') {
+    populateSelect(inputHeavyModel, GOOGLE_MODELS, heavyModel);
+    populateSelect(inputLightModel, GOOGLE_MODELS, lightModel);
+  } else {
+    const models = await window.electronAPI.listOllamaModels();
+    populateSelect(inputHeavyModel, models, heavyModel);
+    populateSelect(inputLightModel, models, lightModel);
+  }
+}
+
 async function showSetup(): Promise<void> {
   worldPickerEl.style.display = 'none';
   ollamaSetupEl.style.display = 'flex';
@@ -92,9 +123,8 @@ async function showSetup(): Promise<void> {
     const config = await window.electronAPI.getConfig();
     inputProvider.value = config.provider;
     inputApiKey.value = config.googleApiKey;
-    inputHeavyModel.value = config.heavyModel;
-    inputLightModel.value = config.lightModel;
     apiKeyField.style.display = config.provider === 'google-ai-studio' ? 'flex' : 'none';
+    await populateModelSelects(config.provider, config.heavyModel, config.lightModel);
     modelConfigStatus.textContent = '';
   } catch {
     // Non-fatal — inputs remain blank
@@ -328,13 +358,11 @@ async function saveModelConfig(): Promise<void> {
   );
 }
 
-inputProvider.addEventListener('change', () => {
+inputProvider.addEventListener('change', async () => {
   const isGoogle = inputProvider.value === 'google-ai-studio';
   apiKeyField.style.display = isGoogle ? 'flex' : 'none';
-  if (isGoogle) {
-    inputHeavyModel.value = 'gemini-2.5-flash';
-    inputLightModel.value = 'gemini-2.5-flash';
-  }
+  const defaultModel = isGoogle ? 'gemini-2.5-flash' : '';
+  await populateModelSelects(inputProvider.value, defaultModel, defaultModel);
   saveModelConfig();
 });
 
@@ -345,19 +373,8 @@ inputApiKey.addEventListener('blur', () => {
   }
 });
 
-inputHeavyModel.addEventListener('blur', () => {
-  if (inputHeavyModel.value.trim() !== inputHeavyModel.dataset.lastSaved) {
-    inputHeavyModel.dataset.lastSaved = inputHeavyModel.value.trim();
-    saveModelConfig();
-  }
-});
-
-inputLightModel.addEventListener('blur', () => {
-  if (inputLightModel.value.trim() !== inputLightModel.dataset.lastSaved) {
-    inputLightModel.dataset.lastSaved = inputLightModel.value.trim();
-    saveModelConfig();
-  }
-});
+inputHeavyModel.addEventListener('change', () => saveModelConfig());
+inputLightModel.addEventListener('change', () => saveModelConfig());
 
 // ---------------------------------------------------------------------------
 // World picker logic

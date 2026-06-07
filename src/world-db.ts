@@ -1086,8 +1086,11 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           } catch {
             // UNIQUE constraint on (x, y, z): movePlayer() committed this room concurrently — no-op
           }
-          } catch {
-            // rate-limit or other generation error in background preload — silently drop
+          } catch (err) {
+            logger?.logError({
+              message: `Background preload failed for ${capturedExitDir} (${capturedTargetCoords.x},${capturedTargetCoords.y},${capturedTargetCoords.z})`,
+              detail: err instanceof Error ? err.message : String(err),
+            });
           }
         })();
       }

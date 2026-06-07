@@ -11,15 +11,18 @@
 
     <!-- World Picker Screen -->
     <div id="world-picker">
-      <h1>LLM RPG</h1>
-      <p class="subtitle">Infinite procedurally generated interactive fiction</p>
+      <div id="world-picker-header">
+        <h1>LLM RPG</h1>
+        <p class="subtitle">Infinite procedurally generated interactive fiction</p>
+        <div class="error-msg" id="picker-error"></div>
+      </div>
 
-      <div class="error-msg" id="picker-error"></div>
+      <div id="world-picker-body">
+        <p id="no-worlds-msg" style="display:none">No worlds yet. Create one to begin.</p>
+        <ul id="world-list"></ul>
 
-      <p id="no-worlds-msg" style="display:none">No worlds yet. Create one to begin.</p>
-      <ul id="world-list"></ul>
-
-      <button class="primary" id="btn-create-world">+ Create New World (select WORLD.md)</button>
+        <button class="primary" id="btn-create-world">+ Create New World (select WORLD.md)</button>
+      </div>
     </div>
 
     <!-- Ollama Setup Screen -->
@@ -47,11 +50,11 @@
           </div>
           <div class="model-field">
             <label for="input-heavy-model">Heavy Mind &mdash; the narrator</label>
-            <input type="text" id="input-heavy-model" autocomplete="off" spellcheck="false" />
+            <select id="input-heavy-model"></select>
           </div>
           <div class="model-field">
             <label for="input-light-model">Light Mind &mdash; the interpreter</label>
-            <input type="text" id="input-light-model" autocomplete="off" spellcheck="false" />
+            <select id="input-light-model"></select>
           </div>
           <div id="model-config-status"></div>
         </details>

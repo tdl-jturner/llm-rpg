@@ -230,6 +230,10 @@ function registerIpcHandlers(): void {
       return { ok: false, error: `Could not open world database: ${e instanceof Error ? e.message : e}` };
     }
 
+    // Kick off background generation for exits from the starting room so
+    // the player's first moves are ready before they finish reading.
+    worldDB.preloadAdjacentRooms(getRealLLM(), activeLogger ?? undefined);
+
     return {
       ok: true,
       folderName,
@@ -272,6 +276,10 @@ function registerIpcHandlers(): void {
     } catch (e) {
       return { ok: false, error: `Could not open world database: ${e instanceof Error ? e.message : e}` };
     }
+
+    // Kick off background generation for exits from the current room so
+    // the player's next moves are ready before they finish reading.
+    worldDB.preloadAdjacentRooms(getRealLLM(), activeLogger ?? undefined);
 
     return {
       ok: true,
@@ -383,6 +391,15 @@ function registerIpcHandlers(): void {
         return response;
       },
     });
+  });
+
+  // ── Ollama: list locally pulled models ───────────────────────────────────
+  ipcMain.handle('list-ollama-models', async (): Promise<string[]> => {
+    try {
+      return await listPulledModels();
+    } catch {
+      return [];
+    }
   });
 
   // ── Ollama: pull missing models ───────────────────────────────────────────
