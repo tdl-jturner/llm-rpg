@@ -191,6 +191,12 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
     'SELECT to_room_id FROM exits WHERE from_room_id = ? AND direction = ?',
   );
   const stmtGetExits = db.prepare('SELECT direction FROM exits WHERE from_room_id = ?');
+  const stmtGetAllowedExits = db.prepare(
+    'SELECT direction FROM room_allowed_exits WHERE room_id = ?',
+  );
+  const stmtInsertAllowedExit = db.prepare(
+    'INSERT OR IGNORE INTO room_allowed_exits (room_id, direction) VALUES (?, ?)',
+  );
   const stmtInsertRoom = db.prepare(
     'INSERT INTO rooms (name, x, y, z, fixed_description) VALUES (?, ?, ?, ?, ?)',
   );
@@ -247,7 +253,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
 
     getCurrentRoomExits(): string[] {
       const player = stmtPlayerRoom.get() as { current_room_id: number };
-      const rows = stmtGetExits.all(player.current_room_id) as { direction: string }[];
+      const rows = stmtGetAllowedExits.all(player.current_room_id) as { direction: string }[];
       return rows.map((r) => r.direction);
     },
 
@@ -641,6 +647,7 @@ export function openWorldDB(worldDir: string, worldFile: WorldFile): WorldDB {
           );
           if (needsRetroBackExit(existingRoomExits, back)) {
             stmtInsertExit.run(existingRoom.id, back, fromRoomId);
+            stmtInsertAllowedExit.run(existingRoom.id, back);
           }
         })();
 

@@ -1084,17 +1084,12 @@ describe('buildInitialRoomDescription', () => {
     expect(result).toBe('You stand at the threshold.');
   });
 
-  it('does not show Exits line for starting room (exits are unmapped until first traversal)', () => {
-    // The starting room has allowed exits configured in room_allowed_exits, but
-    // getCurrentRoomExits() reads from the exits table (actual mapped connections).
-    // On first load the exits table is empty — no exits have been traversed yet.
+  it('shows Exits line for starting room using room_allowed_exits', () => {
     const db = openFreshDB(); // uses exits: ['north', 'south', 'east', 'west']
 
     const result = buildInitialRoomDescription(db);
 
-    // Exits line is absent until the player actually travels through a direction
-    expect(result).not.toContain('Exits:');
-    // Fixed description is still present
+    expect(result).toContain('Exits:');
     expect(result).toContain('You stand at the threshold.');
   });
 
