@@ -81,4 +81,9 @@ describe('getUnknownRefusalKeys', () => {
   it('returns empty array for empty input', () => {
     expect(getUnknownRefusalKeys({})).toEqual([]);
   });
+
+  it('treats nothing_to_take as an unknown key (removed — nothing_here_named covers the same scenario)', () => {
+    const result = getUnknownRefusalKeys({ nothing_to_take: 'x' });
+    expect(result).toContain('nothing_to_take');
+  });
 });

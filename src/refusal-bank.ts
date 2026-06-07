@@ -1,6 +1,8 @@
 const VALID_KEYS = new Set([
   'no_exit',
-  'nothing_to_take',
+  // 'nothing_to_take' was removed — it had no default and was never called.
+  // 'nothing_here_named' covers the same scenario (can't find that entity).
+  // World authors who use this key will now see an "unknown refusal key" warning.
   'nothing_here_named',
   'nothing_to_attack',
   'inventory_empty',
