@@ -41,6 +41,17 @@ function getRealLLM() {
   );
 }
 
+// Light LLM function — uses the light model via Ollama for fast NL intent parsing.
+// Re-created lazily when needed so it always picks up the current appConfig
+// and activeLogger.
+function getLightLLM() {
+  return createRealLLM(
+    appConfig.lightModel,
+    callModel,
+    activeLogger ?? undefined,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
@@ -143,7 +154,7 @@ function openLogger(folderName: string, worldMdPath?: string): EventLogger {
 function registerIpcHandlers(): void {
   // ── Game input ────────────────────────────────────────────────────────────
   ipcMain.handle('submit-input', (_event, text: string) => {
-    return handleSubmitInput(text, worldDB, getRealLLM(), activeLogger, activeWorldBody, activeRefusals);
+    return handleSubmitInput(text, worldDB, getRealLLM(), activeLogger, activeWorldBody, activeRefusals, getLightLLM());
   });
 
   // ── World picker: list ────────────────────────────────────────────────────

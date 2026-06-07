@@ -149,6 +149,79 @@ describe('handleSubmitInput – NL fallback routing', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Issue 021 — separate nlLlmFn vs generationLlmFn
+// ---------------------------------------------------------------------------
+
+describe('handleSubmitInput – separate nlLlmFn and generationLlmFn', () => {
+  it('uses nlLlmFn for NL intent parsing and generationLlmFn for room generation', async () => {
+    const db = makeStubWorldDB();
+
+    const nlLlmFn = vi.fn().mockResolvedValue(JSON.stringify({ command: 'LOOK' }));
+    const generationLlmFn = vi.fn();
+
+    // "smack the goblin" is not matched by deterministic parser → NL path
+    const result = await handleSubmitInput(
+      'smack the goblin with my torch',
+      db as never,
+      generationLlmFn,
+      undefined,
+      'A dark fantasy world.',
+      undefined,
+      nlLlmFn,
+    );
+
+    // NL LLM should have been used for intent parsing
+    expect(nlLlmFn).toHaveBeenCalled();
+    // Generation LLM should NOT have been called (LOOK does not trigger room gen)
+    expect(generationLlmFn).not.toHaveBeenCalled();
+    // LOOK result: narrative has more than just the echo line
+    expect(result.narrative.length).toBeGreaterThan(1);
+  });
+
+  it('uses generationLlmFn for room generation and NOT nlLlmFn', async () => {
+    const db = makeStubWorldDB();
+    db.movePlayer = vi.fn().mockResolvedValue({ ok: false, reason: 'no_exit' });
+
+    const nlLlmFn = vi.fn();
+    const generationLlmFn = vi.fn();
+
+    // "go north" is deterministic — no NL parsing, but generationLlmFn is passed for movePlayer
+    const result = await handleSubmitInput(
+      'go north',
+      db as never,
+      generationLlmFn,
+      undefined,
+      'A dark fantasy world.',
+      undefined,
+      nlLlmFn,
+    );
+
+    // Deterministic parse: NL LLM must not be called
+    expect(nlLlmFn).not.toHaveBeenCalled();
+    // generationLlmFn was passed to movePlayer (which returned no_exit here)
+    expect(result.narrative).toContain("You can't go that way.");
+  });
+
+  it('falls back to generationLlmFn for NL parsing when nlLlmFn is not provided', async () => {
+    const db = makeStubWorldDB();
+
+    const generationLlmFn = vi.fn().mockResolvedValue(JSON.stringify({ command: 'LOOK' }));
+
+    const result = await handleSubmitInput(
+      'gaze around the chamber',
+      db as never,
+      generationLlmFn,
+      undefined,
+      'A dark fantasy world.',
+    );
+
+    // Without nlLlmFn, the generationLlmFn should be used as the fallback for NL parsing
+    expect(generationLlmFn).toHaveBeenCalled();
+    expect(result.narrative.length).toBeGreaterThan(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Refusal overrides integration
 // ---------------------------------------------------------------------------
 

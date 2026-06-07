@@ -85,11 +85,14 @@ export function buildHudData(worldDB: WorldDB): HudData {
 export async function handleSubmitInput(
   text: string,
   worldDB?: WorldDB,
-  llmFn?: LLMFunction,
+  generationLlmFn?: LLMFunction,
   logger?: EventLogger,
   worldBody?: string,
   refusals?: Record<string, string>,
+  nlLlmFn?: LLMFunction,
 ): Promise<SubmitInputResponse> {
+  // Use dedicated NL parser LLM when provided, otherwise fall back to the generation LLM.
+  const parserLlmFn = nlLlmFn ?? generationLlmFn;
   if (!worldDB) {
     // Fallback for tests that don't provide a DB
     return { narrative: [`> ${text}`] };
@@ -120,9 +123,9 @@ export async function handleSubmitInput(
   let intent = parseIntent(text);
   let parsePath: 'deterministic' | 'llm' = 'deterministic';
 
-  if (intent.type === 'unknown' && llmFn && worldBody) {
+  if (intent.type === 'unknown' && parserLlmFn && worldBody) {
     // Deterministic parser couldn't match — try the NL fallback
-    const nlResult = await parseIntentWithNl(text, { llmFn, worldBody });
+    const nlResult = await parseIntentWithNl(text, { llmFn: parserLlmFn, worldBody });
 
     if (nlResult === 'chained') {
       // Multi-action input — reject immediately
@@ -262,7 +265,7 @@ export async function handleSubmitInput(
     }
 
     case 'move': {
-      if (!llmFn) {
+      if (!generationLlmFn) {
         // No LLM function provided — refuse movement (shouldn't happen at runtime)
         narrative.push(emitRefusal('no_exit', logger, refusals));
         break;
@@ -282,7 +285,7 @@ export async function handleSubmitInput(
         }
       }
 
-      const result = await worldDB.movePlayer(intent.direction, llmFn, logger);
+      const result = await worldDB.movePlayer(intent.direction, generationLlmFn, logger);
 
       if (!result.ok) {
         if (result.reason === 'no_exit') {
